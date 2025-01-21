@@ -184,6 +184,88 @@ def load_data(file_path):
         print(f"Erreur lors du chargement des données: {e}")
         return pd.DataFrame()
 
+def create_kpi_card(title, value, icon, color):
+    """Crée une carte KPI avec une valeur et une icône"""
+    return dbc.Card(
+        dbc.CardBody([
+            html.Div([
+                html.I(className=f"fas {icon} fa-2x", style={"color": color}),
+                html.H4(title, className="mt-2"),
+                html.H2(value, className="text-center", style={"color": color}),
+            ], className="text-center")
+        ]),
+        className="mb-4 hover-shadow",
+        style={"height": "200px"}
+    )
+
+def calculate_kpis(df):
+    """Calcule les KPIs principaux"""
+    total_appels = len(df)
+    appels_saint_denis = len(df[df['ville'] == 'Saint-Denis'])
+    appels_saint_pierre = len(df[df['ville'] == 'Saint-Pierre'])
+    
+    return {
+        'total_appels': total_appels,
+        'appels_saint_denis': appels_saint_denis,
+        'appels_saint_pierre': appels_saint_pierre,
+        'categories_uniques': df['Catégorie'].nunique(),
+        'dispositifs_uniques': df['dispositif'].nunique()
+    }
+
+def create_dashboard(df):
+    """Crée un tableau de bord avec les KPIs principaux"""
+    if df.empty:
+        return html.Div()
+    
+    kpis = calculate_kpis(df)
+    
+    return dbc.Container([
+        dbc.Row([
+            dbc.Col([
+                create_kpi_card(
+                    "Total Appels",
+                    kpis['total_appels'],
+                    "fa-phone",
+                    "#28a745"
+                )
+            ], md=4),
+            dbc.Col([
+                create_kpi_card(
+                    "Appels Saint-Denis",
+                    kpis['appels_saint_denis'],
+                    "fa-building",
+                    "#007bff"
+                )
+            ], md=4),
+            dbc.Col([
+                create_kpi_card(
+                    "Appels Saint-Pierre",
+                    kpis['appels_saint_pierre'],
+                    "fa-building",
+                    "#17a2b8"
+                )
+            ], md=4),
+        ]),
+        dbc.Row([
+            dbc.Col([
+                create_kpi_card(
+                    "Catégories",
+                    kpis['categories_uniques'],
+                    "fa-tags",
+                    "#6f42c1"
+                )
+            ], md=6),
+            dbc.Col([
+                create_kpi_card(
+                    "Dispositifs",
+                    kpis['dispositifs_uniques'],
+                    "fa-cogs",
+                    "#fd7e14"
+                )
+            ], md=6),
+        ]),
+    ], fluid=True, className="mb-4")
+
 def create_daily_stats(df):
     if df.empty:
         return dbc.Alert([
@@ -221,6 +303,9 @@ def create_daily_stats(df):
             html.I(className="fas fa-chart-line me-3"),
             f"Rapport Journalier du {datetime.now().strftime('%d-%m-%Y')}"
         ], className="text-center my-4"),
+        
+        # Nouveau ! Ajout du tableau de bord
+        create_dashboard(df),
         
         # Section 1: Statistiques Dispositif
         dbc.Card([
@@ -271,6 +356,168 @@ def create_daily_stats(df):
         ])
     ], fluid=True)
 
+def create_home_layout():
+    """Crée le layout de la page d'accueil"""
+    # Liste des fichiers récents
+    files = []
+    if os.path.exists(UPLOAD_DIRECTORY):
+        for filename in os.listdir(UPLOAD_DIRECTORY):
+            if filename.endswith('.csv'):
+                path = os.path.join(UPLOAD_DIRECTORY, filename)
+                if os.path.isfile(path):
+                    date_str = filename.split('_')[1][:8]
+                    date = datetime.strptime(date_str, "%Y%m%d").strftime("%d-%m-%Y")
+                    files.append({'name': filename, 'date': date, 'path': path})
+    
+    files = sorted(files, key=lambda x: x['date'], reverse=True)
+    
+    return html.Div([
+        # Hero Section
+        dbc.Container([
+            dbc.Row([
+                dbc.Col([
+                    html.Div([
+                        html.H1([
+                            html.I(className="fas fa-tachometer-alt me-3"),
+                            "Tableau de Bord GLPI"
+                        ], className="display-4 mb-4"),
+                        html.P(
+                            "Analysez vos données d'appels et générez des rapports détaillés",
+                            className="lead mb-4"
+                        ),
+                        html.Hr(className="my-4"),
+                    ], className="text-center py-5")
+                ])
+            ], className="mb-5")
+        ], fluid=True, className="bg-light py-3"),
+        
+        # Main Content
+        dbc.Container([
+            dbc.Row([
+                # Section Upload
+                dbc.Col([
+                    dbc.Card([
+                        dbc.CardHeader([
+                            html.H4([
+                                html.I(className="fas fa-upload me-2"),
+                                "Importer un fichier"
+                            ], className="mb-0")
+                        ], className="bg-primary text-white"),
+                        dbc.CardBody([
+                            dcc.Upload(
+                                id='upload-data',
+                                children=html.Div([
+                                    html.I(className="fas fa-cloud-upload-alt fa-3x mb-3"),
+                                    html.Div("Glissez-déposez un fichier CSV ici ou"),
+                                    dbc.Button(
+                                        "Parcourir",
+                                        color="primary",
+                                        size="sm",
+                                        className="mt-2"
+                                    ),
+                                ], className="text-center"),
+                                style=UPLOAD_STYLE,
+                                multiple=False,
+                                accept='.csv'
+                            ),
+                            html.Div(id='output-data-upload'),
+                            dbc.Alert([
+                                html.I(className="fas fa-info-circle me-2"),
+                                "Seuls les fichiers CSV sont acceptés"
+                            ], color="info", className="mt-3")
+                        ])
+                    ], className="mb-4 hover-shadow")
+                ], md=6),
+                
+                # Section Fichiers Récents
+                dbc.Col([
+                    dbc.Card([
+                        dbc.CardHeader([
+                            html.H4([
+                                html.I(className="fas fa-history me-2"),
+                                "Fichiers Récents"
+                            ], className="mb-0")
+                        ], className="bg-success text-white"),
+                        dbc.CardBody([
+                            html.Div([
+                                dbc.ListGroup([
+                                    dbc.ListGroupItem([
+                                        dbc.Row([
+                                            dbc.Col([
+                                                html.I(className="fas fa-file-csv me-2 text-success"),
+                                                f"Rapport du {file['date']}"
+                                            ], width=8),
+                                            dbc.Col([
+                                                dbc.Button([
+                                                    html.I(className="fas fa-chart-bar me-2"),
+                                                    "Voir"
+                                                ], 
+                                                color="success",
+                                                size="sm",
+                                                href=f"/journalier?file={file['name']}")
+                                            ], width=4, className="text-end")
+                                        ])
+                                    ], className="hover-light") for file in files[:5]
+                                ] if files else [
+                                    dbc.ListGroupItem([
+                                        html.I(className="fas fa-info-circle me-2"),
+                                        "Aucun fichier récent"
+                                    ], className="text-muted text-center")
+                                ])
+                            ], style={"maxHeight": "300px", "overflowY": "auto"})
+                        ])
+                    ], className="mb-4 hover-shadow")
+                ], md=6)
+            ]),
+            
+            # Section Guide
+            dbc.Row([
+                dbc.Col([
+                    dbc.Card([
+                        dbc.CardHeader([
+                            html.H4([
+                                html.I(className="fas fa-book me-2"),
+                                "Guide d'utilisation"
+                            ], className="mb-0")
+                        ], className="bg-info text-white"),
+                        dbc.CardBody([
+                            dbc.Row([
+                                dbc.Col([
+                                    html.Div([
+                                        html.I(className="fas fa-file-upload fa-2x mb-3 text-info"),
+                                        html.H5("1. Import", className="mb-2"),
+                                        html.P("Uploadez votre fichier CSV via le formulaire", className="text-muted")
+                                    ], className="text-center")
+                                ], md=3),
+                                dbc.Col([
+                                    html.Div([
+                                        html.I(className="fas fa-chart-pie fa-2x mb-3 text-info"),
+                                        html.H5("2. Analyse", className="mb-2"),
+                                        html.P("Visualisez les statistiques générées", className="text-muted")
+                                    ], className="text-center")
+                                ], md=3),
+                                dbc.Col([
+                                    html.Div([
+                                        html.I(className="fas fa-filter fa-2x mb-3 text-info"),
+                                        html.H5("3. Filtrage", className="mb-2"),
+                                        html.P("Filtrez les données par catégorie", className="text-muted")
+                                    ], className="text-center")
+                                ], md=3),
+                                dbc.Col([
+                                    html.Div([
+                                        html.I(className="fas fa-download fa-2x mb-3 text-info"),
+                                        html.H5("4. Export", className="mb-2"),
+                                        html.P("Exportez vos rapports en PDF", className="text-muted")
+                                    ], className="text-center")
+                                ], md=3),
+                            ])
+                        ])
+                    ], className="mb-4 hover-shadow")
+                ])
+            ])
+        ], fluid=True)
+    ])
+
 # Layout principal
 app.layout = html.Div([
     navbar,
@@ -285,48 +532,7 @@ app.layout = html.Div([
 )
 def display_page(pathname, search):
     if pathname == '/':
-        return html.Div([
-            dbc.Container([
-                html.H1([
-                    html.I(className="fas fa-tachometer-alt me-3"),
-                    "Tableau de Bord GLPI"
-                ], className="text-center mt-4 mb-5"),
-                
-                dbc.Row([
-                    dbc.Col([
-                        dbc.Card([
-                            dbc.CardHeader(html.H4([
-                                html.I(className="fas fa-upload me-2"),
-                                "Importer un nouveau fichier"
-                            ])),
-                            dbc.CardBody([
-                                dcc.Upload(
-                                    id='upload-data',
-                                    children=html.Div([
-                                        html.I(className="fas fa-cloud-upload-alt fa-3x mb-3"),
-                                        html.Div("Glissez-déposez un fichier CSV ici ou"),
-                                        dbc.Button(
-                                            "Parcourir",
-                                            color="primary",
-                                            size="sm",
-                                            className="mt-2"
-                                        ),
-                                    ], className="text-center"),
-                                    style=UPLOAD_STYLE,
-                                    multiple=False,
-                                    accept='.csv'
-                                ),
-                                html.Div(id='output-data-upload'),
-                                dbc.Alert([
-                                    html.I(className="fas fa-info-circle me-2"),
-                                    "Seuls les fichiers CSV sont acceptés"
-                                ], color="info", className="mt-3")
-                            ])
-                        ], style=CUSTOM_STYLE)
-                    ], md=12)
-                ])
-            ], fluid=True)
-        ])
+        return create_home_layout()
     
     elif pathname == '/journalier':
         if search:
