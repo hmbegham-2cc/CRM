@@ -535,16 +535,43 @@ def display_page(pathname, search):
         return create_home_layout()
     
     elif pathname == '/journalier':
+        files = []
+        if os.path.exists(UPLOAD_DIRECTORY):
+            for filename in os.listdir(UPLOAD_DIRECTORY):
+                if filename.endswith('.csv'):
+                    path = os.path.join(UPLOAD_DIRECTORY, filename)
+                    if os.path.isfile(path):
+                        date_str = filename.split('_')[1][:8]
+                        date = datetime.strptime(date_str, "%Y%m%d").strftime("%d-%m-%Y")
+                        files.append({'name': filename, 'date': date, 'path': path})
+        
+        files = sorted(files, key=lambda x: x['date'], reverse=True)
+        
         if search:
             filename = search.split('=')[1]
             filepath = os.path.join(UPLOAD_DIRECTORY, filename)
             if os.path.exists(filepath):
                 df = load_data(filepath)
                 return create_daily_stats(df)
-        return dbc.Alert([
-            html.I(className="fas fa-info-circle me-2"),
-            "Sélectionnez un fichier sur la page d'accueil"
-        ], color="info", className="m-4")
+        
+        return html.Div([
+            html.H3("Fichiers Disponibles"),
+            dbc.Table(
+                [
+                    html.Thead(html.Tr([html.Th("Nom"), html.Th("Date"), html.Th("Action")]))
+                ] + [
+                    html.Tr([
+                        html.Td(file['name']),
+                        html.Td(file['date']),
+                        html.Td(dbc.Button("Voir Tableau de Bord", href=f"/journalier?file={file['name']}", color="primary", size="sm"))
+                    ]) for file in files
+                ],
+                bordered=True,
+                hover=True,
+                responsive=True,
+                striped=True
+            )
+        ])
     
     elif pathname == '/hebdomadaire':
         return dbc.Alert([
