@@ -11,8 +11,6 @@ from dash import dash_table
 from dash.exceptions import PreventUpdate
 import json
 from dash.dash_table import Format
-import io
-import sqlite3
 
 # Styles personnalisés
 CUSTOM_STYLE = {
@@ -43,54 +41,41 @@ UPLOAD_DIRECTORY = "uploads"
 if not os.path.exists(UPLOAD_DIRECTORY):
     os.makedirs(UPLOAD_DIRECTORY)
 
-# Chemin vers la base de données SQLite
-DB_PATH = 'data/dashboard.db'
+# Chemin vers le fichier de sauvegarde des modifications
+MODIFICATIONS_FILE = 'data/modifications.json'
 
-def init_db():
-    """Initialise la base de données SQLite"""
+def save_modifications(data, table_id, filename):
+    """Sauvegarde les modifications dans un fichier JSON"""
     os.makedirs('data', exist_ok=True)
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS table_modifications
-        (table_id TEXT PRIMARY KEY, data TEXT)
-    ''')
-    conn.commit()
-    conn.close()
-
-def save_modifications(data, table_id):
-    """Sauvegarde les modifications dans la base de données SQLite"""
     try:
-        conn = sqlite3.connect(DB_PATH)
-        c = conn.cursor()
-        # Convertir les données en JSON pour le stockage
-        json_data = json.dumps(data)
-        # Insérer ou mettre à jour les données
-        c.execute('INSERT OR REPLACE INTO table_modifications (table_id, data) VALUES (?, ?)',
-                 (table_id, json_data))
-        conn.commit()
+        if os.path.exists(MODIFICATIONS_FILE):
+            with open(MODIFICATIONS_FILE, 'r') as f:
+                all_modifications = json.load(f)
+        else:
+            all_modifications = {}
+        
+        # Utiliser le nom du fichier comme clé pour les modifications
+        if filename not in all_modifications:
+            all_modifications[filename] = {}
+        
+        all_modifications[filename][table_id] = data
+        
+        with open(MODIFICATIONS_FILE, 'w') as f:
+            json.dump(all_modifications, f)
     except Exception as e:
         print(f"Erreur lors de la sauvegarde des modifications: {e}")
-    finally:
-        conn.close()
 
-def load_modifications(table_id):
-    """Charge les modifications depuis la base de données SQLite"""
+def load_modifications(table_id, filename):
+    """Charge les modifications depuis le fichier JSON"""
     try:
-        conn = sqlite3.connect(DB_PATH)
-        c = conn.cursor()
-        c.execute('SELECT data FROM table_modifications WHERE table_id = ?', (table_id,))
-        result = c.fetchone()
-        if result:
-            return json.loads(result[0])
+        if os.path.exists(MODIFICATIONS_FILE):
+            with open(MODIFICATIONS_FILE, 'r') as f:
+                all_modifications = json.load(f)
+                # Ne charger que les modifications pour le fichier actuel
+                return all_modifications.get(filename, {}).get(table_id, None)
     except Exception as e:
         print(f"Erreur lors du chargement des modifications: {e}")
-    finally:
-        conn.close()
     return None
-
-# Initialiser la base de données au démarrage
-init_db()
 
 # Initialisation de l'application Dash
 app = dash.Dash(
@@ -127,12 +112,10 @@ def create_stat_table(df, title, header_color="#edf2f7", add_total=True):
             total_row = pd.DataFrame([{col: df[col].sum() if col in numeric_cols else 'TOTAL' for col in df.columns}])
             df = pd.concat([df, total_row], ignore_index=True)
     
-    # Générer un identifiant unique basé sur la date du fichier
-    filename = df.get('filename', '').split('.')[0] if 'filename' in df else datetime.now().strftime('%Y%m%d')
-    table_id = f'table-{title.lower().replace(" ", "-")}-{filename}'
+    table_id = f'table-{title.lower().replace(" ", "-")}'
     
     # Charger les modifications sauvegardées
-    saved_data = load_modifications(table_id)
+    saved_data = load_modifications(table_id, 'data.csv')
     if saved_data:
         df = pd.DataFrame(saved_data)
     
@@ -459,29 +442,33 @@ def create_daily_stats(df):
 @app.callback(
     Output('table-statistiques-des-appels', 'data'),
     Input('table-statistiques-des-appels', 'data_timestamp'),
-    State('table-statistiques-des-appels', 'data')
+    State('table-statistiques-des-appels', 'data'),
+    State('url', 'search')
 )
-def update_table_data(timestamp, data):
-    if timestamp is None or data is None:
+def update_table_data(timestamp, data, search):
+    """Callback pour mettre à jour les données du tableau"""
+    if timestamp is None:
         raise PreventUpdate
     
     # Convertir les données en DataFrame
     df = pd.DataFrame(data)
     
-    # Récupérer le nom du fichier des données
-    filename = df['filename'].iloc[0] if 'filename' in df.columns else datetime.now().strftime('%Y%m%d')
-    table_id = f'table-statistiques-des-appels-{filename}'
-    
     # Calculer le total uniquement pour les 5 premières lignes
     for i in range(5):
-        df.at[i, 'Total'] = float(df.at[i, 'Saint-Denis']) + float(df.at[i, 'Saint-Pierre'])
+        if df.at[i, 'Type'] not in ['Attente la plus longue', 'Attente moyenne', 'Temps de parole moyen', 'Résolution au premier contact']:
+            df.at[i, 'Total'] = float(df.at[i, 'Saint-Denis']) + float(df.at[i, 'Saint-Pierre'])
+        else:
+            df.at[i, 'Total'] = ''
     
-    # S'assurer que les lignes 6-9 ont un total vide
-    for i in range(5, 9):
-        df.at[i, 'Total'] = ''
+    # Vérifier que le paramètre 'search' est bien formaté et contient le nom du fichier
+    if search and '=' in search:
+        filename = search.split('=')[1]
+    else:
+        print("Erreur: Nom de fichier manquant dans l'URL")
+        raise PreventUpdate
     
-    # Sauvegarder les modifications
-    save_modifications(df.to_dict('records'), table_id)
+    # Sauvegarder les modifications avec un identifiant unique basé sur le nom du fichier
+    save_modifications(df.to_dict('records'), 'table-statistiques-des-appels', filename)
     
     return df.to_dict('records')
 
@@ -491,30 +478,33 @@ def update_table_data(timestamp, data):
     State('upload-data', 'filename')
 )
 def update_output(contents, filename):
-    if contents is None:
-        return html.Div([
-            html.I(className="fas fa-upload me-2"),
-            "Glissez-déposez ou cliquez pour sélectionner un fichier CSV"
-        ])
-
-    try:
-        # Décoder le contenu du fichier
-        content_type, content_string = contents.split(',')
-        decoded = base64.b64decode(content_string)
-        
-        # Lire le fichier CSV
-        df = pd.read_csv(io.StringIO(decoded.decode('utf-8')))
-        
-        # Ajouter le nom du fichier aux données
-        df['filename'] = filename
-        
-        return create_daily_stats(df)
-
-    except Exception as e:
-        print(e)
-        return html.Div([
-            'Une erreur est survenue lors du traitement du fichier.'
-        ])
+    if contents is not None:
+        try:
+            content_type, content_string = contents.split(',')
+            decoded = base64.b64decode(content_string)
+            
+            date_str = datetime.now().strftime("%Y%m%d")
+            new_filename = f"data_{date_str}.csv"
+            
+            filepath = os.path.join(UPLOAD_DIRECTORY, new_filename)
+            with open(filepath, 'wb') as f:
+                f.write(decoded)
+            
+            return dbc.Alert([
+                html.I(className="fas fa-check-circle me-2"),
+                f"Fichier sauvegardé avec succès ! ",
+                dbc.Button("Voir les statistiques", 
+                          href=f"/journalier?file={new_filename}",
+                          color="success",
+                          size="sm",
+                          className="ms-2")
+            ], color="success", className="mt-3")
+            
+        except Exception as e:
+            return dbc.Alert([
+                html.I(className="fas fa-exclamation-triangle me-2"),
+                f"Erreur lors du traitement du fichier: {str(e)}"
+            ], color="danger", className="mt-3")
 
 @app.callback(
     Output('page-content', 'children'),
