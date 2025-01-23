@@ -7,6 +7,12 @@ import plotly.graph_objects as go
 from datetime import datetime
 import os
 import base64
+from dash import dash_table
+from dash.exceptions import PreventUpdate
+import json
+from dash.dash_table import Format
+import io
+import sqlite3
 
 # Styles personnalisés
 CUSTOM_STYLE = {
@@ -32,10 +38,59 @@ UPLOAD_STYLE = {
     'cursor': 'pointer'
 }
 
-# Créer le dossier pour stocker les fichiers
+# Chemin vers le dossier pour stocker les fichiers
 UPLOAD_DIRECTORY = "uploads"
 if not os.path.exists(UPLOAD_DIRECTORY):
     os.makedirs(UPLOAD_DIRECTORY)
+
+# Chemin vers la base de données SQLite
+DB_PATH = 'data/dashboard.db'
+
+def init_db():
+    """Initialise la base de données SQLite"""
+    os.makedirs('data', exist_ok=True)
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS table_modifications
+        (table_id TEXT PRIMARY KEY, data TEXT)
+    ''')
+    conn.commit()
+    conn.close()
+
+def save_modifications(data, table_id):
+    """Sauvegarde les modifications dans la base de données SQLite"""
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        # Convertir les données en JSON pour le stockage
+        json_data = json.dumps(data)
+        # Insérer ou mettre à jour les données
+        c.execute('INSERT OR REPLACE INTO table_modifications (table_id, data) VALUES (?, ?)',
+                 (table_id, json_data))
+        conn.commit()
+    except Exception as e:
+        print(f"Erreur lors de la sauvegarde des modifications: {e}")
+    finally:
+        conn.close()
+
+def load_modifications(table_id):
+    """Charge les modifications depuis la base de données SQLite"""
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        c.execute('SELECT data FROM table_modifications WHERE table_id = ?', (table_id,))
+        result = c.fetchone()
+        if result:
+            return json.loads(result[0])
+    except Exception as e:
+        print(f"Erreur lors du chargement des modifications: {e}")
+    finally:
+        conn.close()
+    return None
+
+# Initialiser la base de données au démarrage
+init_db()
 
 # Initialisation de l'application Dash
 app = dash.Dash(
@@ -63,44 +118,83 @@ navbar = dbc.NavbarSimple(
 )
 
 def create_stat_table(df, title, header_color="#edf2f7", add_total=True):
-    """Crée un tableau de statistiques avec le style du template"""
+    """Crée un tableau de statistiques éditable avec le style du template"""
     if add_total and not df.empty:
-        # Créer une copie pour ne pas modifier le DataFrame original
         df = df.copy()
-        
-        # Pour les colonnes numériques, ajouter une ligne de total
+        # Ajouter une ligne de total
         numeric_cols = df.select_dtypes(include=['int64', 'float64']).columns
         if not numeric_cols.empty:
-            total_row = pd.DataFrame([{
-                col: df[col].sum() if col in numeric_cols else 'TOTAL'
-                for col in df.columns
-            }])
+            total_row = pd.DataFrame([{col: df[col].sum() if col in numeric_cols else 'TOTAL' for col in df.columns}])
             df = pd.concat([df, total_row], ignore_index=True)
     
-    return dbc.Table(
-        [
-            html.Thead(
-                html.Tr(
-                    [html.Th(col, style={"background-color": header_color}) for col in df.columns],
-                ),
-            ),
-            html.Tbody([
-                html.Tr([
-                    html.Td(
-                        df.iloc[i][col],
-                        style={
-                            "font-weight": "bold" if i == len(df) - 1 and add_total else "normal",
-                            "background-color": "#f8f9fa" if i == len(df) - 1 and add_total else "white"
-                        }
-                    ) for col in df.columns
-                ]) for i in range(len(df))
-            ]),
+    # Générer un identifiant unique basé sur la date du fichier
+    filename = df.get('filename', '').split('.')[0] if 'filename' in df else datetime.now().strftime('%Y%m%d')
+    table_id = f'table-{title.lower().replace(" ", "-")}-{filename}'
+    
+    # Charger les modifications sauvegardées
+    saved_data = load_modifications(table_id)
+    if saved_data:
+        df = pd.DataFrame(saved_data)
+    
+    data = df.to_dict('records')
+    
+    # Définir quelles colonnes sont éditables
+    columns = []
+    for col in df.columns:
+        if title == "Statistiques des Appels" and col in ['Type', 'Saint-Denis', 'Total']:
+            columns.append({"name": col, "id": col, "editable": False})
+        else:
+            columns.append({"name": col, "id": col, "editable": True})
+    
+    # Style conditionnel pour les cellules non éditables
+    non_editable_style = {
+        'if': {
+            'filter_query': '{Type} = "Attente la plus longue" || {Type} = "Attente moyenne" || {Type} = "Temps de parole moyen" || {Type} = "Résolution au premier contact"',
+            'column_id': ['Saint-Denis', 'Total']
+        },
+        'backgroundColor': '#f8f9fa',
+        'color': '#6c757d'
+    }
+    
+    # Ajouter une validation pour le format hh:mm:ss pour les lignes 6 à 9 de la colonne 'Saint-Pierre'
+    time_format_style = {
+        'if': {
+            'filter_query': '{Type} = "Attente la plus longue" || {Type} = "Attente moyenne" || {Type} = "Temps de parole moyen" || {Type} = "Résolution au premier contact"',
+            'column_id': 'Saint-Pierre'
+        },
+        'type': 'text',
+        'textAlign': 'center',
+        'backgroundColor': 'rgb(248, 248, 248)',
+        'border': '1px solid black'
+    }
+    
+    return dash_table.DataTable(
+        id=table_id,
+        data=data,
+        columns=columns,
+        editable=True,
+        row_deletable=False,
+        style_table={'overflowX': 'auto'},
+        style_header={
+            'backgroundColor': header_color,
+            'fontWeight': 'bold',
+            'textAlign': 'center'
+        },
+        style_cell={
+            'textAlign': 'center',
+            'padding': '10px',
+            'backgroundColor': 'white',
+            'minWidth': '100px'
+        },
+        style_data_conditional=[
+            {
+                'if': {'row_index': 'odd'},
+                'backgroundColor': 'rgb(248, 248, 248)'
+            },
+            non_editable_style,
+            time_format_style
         ],
-        bordered=True,
-        hover=True,
-        responsive=True,
-        striped=True,
-        className="mb-3",
+        style_as_list_view=True
     )
 
 def create_bar_chart(data, x, y, color, title, orientation='v'):
@@ -288,11 +382,17 @@ def create_daily_stats(df):
                        len(df[df['ville'] == 'Saint-Denis']), 0, '', '', '', ''],
         'Saint-Pierre': [len(df[df['ville'] == 'Saint-Pierre']), 0, 0,
                         len(df[df['ville'] == 'Saint-Pierre']), 0, '', '', '', ''],
+        'Total': ['', '', '', '', '', '', '', '', '']  # Initialiser la colonne Total avec des chaînes vides
     })
-    appels_stats['Total'] = appels_stats[['Saint-Denis', 'Saint-Pierre']].apply(
-        lambda x: sum(v for v in x if isinstance(v, (int, float))), axis=1
-    )
-    
+
+    # Calculer le total uniquement pour les 5 premières lignes
+    for i in range(5):
+        appels_stats.at[i, 'Total'] = float(appels_stats.at[i, 'Saint-Denis']) + float(appels_stats.at[i, 'Saint-Pierre'])
+
+    # Initialiser les cellules de la colonne 'Saint-Pierre' pour les lignes 6 à 9 avec '00:00:00'
+    for index in range(5, 9):
+        appels_stats.at[index, 'Saint-Pierre'] = '00:00:00'
+
     # 3. Tableau Statistiques Catégories
     categories_stats = df.groupby(['Catégorie', 'ville']).size().unstack(fill_value=0)
     categories_stats['Total'] = categories_stats.sum(axis=1)
@@ -301,7 +401,7 @@ def create_daily_stats(df):
     return dbc.Container([
         html.H2([
             html.I(className="fas fa-chart-line me-3"),
-            f"Rapport Journalier du {datetime.now().strftime('%d-%m-%Y')}"
+            "Tableau de Bord"
         ], className="text-center my-4"),
         
         # Nouveau ! Ajout du tableau de bord
@@ -355,6 +455,128 @@ def create_daily_stats(df):
             ])
         ])
     ], fluid=True)
+
+@app.callback(
+    Output('table-statistiques-des-appels', 'data'),
+    Input('table-statistiques-des-appels', 'data_timestamp'),
+    State('table-statistiques-des-appels', 'data')
+)
+def update_table_data(timestamp, data):
+    if timestamp is None or data is None:
+        raise PreventUpdate
+    
+    # Convertir les données en DataFrame
+    df = pd.DataFrame(data)
+    
+    # Récupérer le nom du fichier des données
+    filename = df['filename'].iloc[0] if 'filename' in df.columns else datetime.now().strftime('%Y%m%d')
+    table_id = f'table-statistiques-des-appels-{filename}'
+    
+    # Calculer le total uniquement pour les 5 premières lignes
+    for i in range(5):
+        df.at[i, 'Total'] = float(df.at[i, 'Saint-Denis']) + float(df.at[i, 'Saint-Pierre'])
+    
+    # S'assurer que les lignes 6-9 ont un total vide
+    for i in range(5, 9):
+        df.at[i, 'Total'] = ''
+    
+    # Sauvegarder les modifications
+    save_modifications(df.to_dict('records'), table_id)
+    
+    return df.to_dict('records')
+
+@app.callback(
+    Output('output-data-upload', 'children'),
+    Input('upload-data', 'contents'),
+    State('upload-data', 'filename')
+)
+def update_output(contents, filename):
+    if contents is None:
+        return html.Div([
+            html.I(className="fas fa-upload me-2"),
+            "Glissez-déposez ou cliquez pour sélectionner un fichier CSV"
+        ])
+
+    try:
+        # Décoder le contenu du fichier
+        content_type, content_string = contents.split(',')
+        decoded = base64.b64decode(content_string)
+        
+        # Lire le fichier CSV
+        df = pd.read_csv(io.StringIO(decoded.decode('utf-8')))
+        
+        # Ajouter le nom du fichier aux données
+        df['filename'] = filename
+        
+        return create_daily_stats(df)
+
+    except Exception as e:
+        print(e)
+        return html.Div([
+            'Une erreur est survenue lors du traitement du fichier.'
+        ])
+
+@app.callback(
+    Output('page-content', 'children'),
+    [Input('url', 'pathname'),
+     Input('url', 'search')]
+)
+def display_page(pathname, search):
+    if pathname == '/':
+        return create_home_layout()
+    
+    elif pathname == '/journalier':
+        files = []
+        if os.path.exists(UPLOAD_DIRECTORY):
+            for filename in os.listdir(UPLOAD_DIRECTORY):
+                if filename.endswith('.csv'):
+                    path = os.path.join(UPLOAD_DIRECTORY, filename)
+                    if os.path.isfile(path):
+                        date_str = filename.split('_')[1][:8]
+                        date = datetime.strptime(date_str, "%Y%m%d").strftime("%d-%m-%Y")
+                        files.append({'name': filename, 'date': date, 'path': path})
+        
+        files = sorted(files, key=lambda x: x['date'], reverse=True)
+        
+        if search:
+            filename = search.split('=')[1]
+            filepath = os.path.join(UPLOAD_DIRECTORY, filename)
+            if os.path.exists(filepath):
+                df = load_data(filepath)
+                return create_daily_stats(df)
+        
+        return html.Div([
+            html.H3("Fichiers Disponibles"),
+            dbc.Table(
+                [
+                    html.Thead(html.Tr([html.Th("Nom"), html.Th("Date"), html.Th("Action")]))
+                ] + [
+                    html.Tr([
+                        html.Td(file['name']),
+                        html.Td(file['date']),
+                        html.Td(dbc.Button("Voir Tableau de Bord", href=f"/journalier?file={file['name']}", color="primary", size="sm"))
+                    ]) for file in files
+                ],
+                bordered=True,
+                hover=True,
+                responsive=True,
+                striped=True
+            )
+        ])
+    
+    elif pathname == '/hebdomadaire':
+        return dbc.Alert([
+            html.I(className="fas fa-tools me-2"),
+            "Statistiques Hebdomadaires - En développement"
+        ], color="secondary", className="m-4")
+    
+    elif pathname == '/mensuel':
+        return dbc.Alert([
+            html.I(className="fas fa-tools me-2"),
+            "Statistiques Mensuelles - En développement"
+        ], color="secondary", className="m-4")
+    
+    return html.Div("404 - Page non trouvée")
 
 def create_home_layout():
     """Crée le layout de la page d'accueil"""
@@ -524,102 +746,6 @@ app.layout = html.Div([
     dcc.Location(id='url', refresh=False),
     html.Div(id='page-content')
 ])
-
-@app.callback(
-    Output('page-content', 'children'),
-    [Input('url', 'pathname'),
-     Input('url', 'search')]
-)
-def display_page(pathname, search):
-    if pathname == '/':
-        return create_home_layout()
-    
-    elif pathname == '/journalier':
-        files = []
-        if os.path.exists(UPLOAD_DIRECTORY):
-            for filename in os.listdir(UPLOAD_DIRECTORY):
-                if filename.endswith('.csv'):
-                    path = os.path.join(UPLOAD_DIRECTORY, filename)
-                    if os.path.isfile(path):
-                        date_str = filename.split('_')[1][:8]
-                        date = datetime.strptime(date_str, "%Y%m%d").strftime("%d-%m-%Y")
-                        files.append({'name': filename, 'date': date, 'path': path})
-        
-        files = sorted(files, key=lambda x: x['date'], reverse=True)
-        
-        if search:
-            filename = search.split('=')[1]
-            filepath = os.path.join(UPLOAD_DIRECTORY, filename)
-            if os.path.exists(filepath):
-                df = load_data(filepath)
-                return create_daily_stats(df)
-        
-        return html.Div([
-            html.H3("Fichiers Disponibles"),
-            dbc.Table(
-                [
-                    html.Thead(html.Tr([html.Th("Nom"), html.Th("Date"), html.Th("Action")]))
-                ] + [
-                    html.Tr([
-                        html.Td(file['name']),
-                        html.Td(file['date']),
-                        html.Td(dbc.Button("Voir Tableau de Bord", href=f"/journalier?file={file['name']}", color="primary", size="sm"))
-                    ]) for file in files
-                ],
-                bordered=True,
-                hover=True,
-                responsive=True,
-                striped=True
-            )
-        ])
-    
-    elif pathname == '/hebdomadaire':
-        return dbc.Alert([
-            html.I(className="fas fa-tools me-2"),
-            "Statistiques Hebdomadaires - En développement"
-        ], color="secondary", className="m-4")
-    
-    elif pathname == '/mensuel':
-        return dbc.Alert([
-            html.I(className="fas fa-tools me-2"),
-            "Statistiques Mensuelles - En développement"
-        ], color="secondary", className="m-4")
-    
-    return html.Div("404 - Page non trouvée")
-
-@app.callback(
-    Output('output-data-upload', 'children'),
-    Input('upload-data', 'contents'),
-    State('upload-data', 'filename')
-)
-def update_output(contents, filename):
-    if contents is not None:
-        try:
-            content_type, content_string = contents.split(',')
-            decoded = base64.b64decode(content_string)
-            
-            date_str = datetime.now().strftime("%Y%m%d")
-            new_filename = f"data_{date_str}.csv"
-            
-            filepath = os.path.join(UPLOAD_DIRECTORY, new_filename)
-            with open(filepath, 'wb') as f:
-                f.write(decoded)
-            
-            return dbc.Alert([
-                html.I(className="fas fa-check-circle me-2"),
-                f"Fichier sauvegardé avec succès ! ",
-                dbc.Button("Voir les statistiques", 
-                          href=f"/journalier?file={new_filename}",
-                          color="success",
-                          size="sm",
-                          className="ms-2")
-            ], color="success", className="mt-3")
-            
-        except Exception as e:
-            return dbc.Alert([
-                html.I(className="fas fa-exclamation-triangle me-2"),
-                f"Erreur lors du traitement du fichier: {str(e)}"
-            ], color="danger", className="mt-3")
 
 if __name__ == '__main__':
     app.run_server(debug=True)
