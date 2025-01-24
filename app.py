@@ -11,6 +11,7 @@ from dash import dash_table
 from dash.exceptions import PreventUpdate
 import json
 from dash.dash_table import Format
+import sqlite3
 
 # Styles personnalisés
 CUSTOM_STYLE = {
@@ -41,36 +42,63 @@ UPLOAD_DIRECTORY = "uploads"
 if not os.path.exists(UPLOAD_DIRECTORY):
     os.makedirs(UPLOAD_DIRECTORY)
 
-# Chemin vers le fichier de sauvegarde des modifications
-MODIFICATIONS_FILE = 'data/modifications.json'
+# Chemin vers la base de données SQLite
+DB_FILE = 'data/modifications.db'
+
+def init_db():
+    """Initialise la base de données"""
+    os.makedirs('data', exist_ok=True)
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute('''CREATE TABLE IF NOT EXISTS modifications
+                 (table_id TEXT, date TEXT, data TEXT)''')
+    conn.commit()
+    conn.close()
 
 def save_modifications(data, table_id):
-    """Sauvegarde les modifications dans un fichier JSON"""
-    os.makedirs('data', exist_ok=True)
+    """Sauvegarde les modifications dans SQLite"""
     try:
-        if os.path.exists(MODIFICATIONS_FILE):
-            with open(MODIFICATIONS_FILE, 'r') as f:
-                all_modifications = json.load(f)
-        else:
-            all_modifications = {}
+        conn = sqlite3.connect(DB_FILE)
+        c = conn.cursor()
         
-        all_modifications[table_id] = data
+        # Convertir les données en JSON
+        data_json = json.dumps(data)
+        current_date = datetime.now().strftime('%Y-%m-%d')
         
-        with open(MODIFICATIONS_FILE, 'w') as f:
-            json.dump(all_modifications, f)
+        # Supprimer l'ancienne entrée si elle existe
+        c.execute('DELETE FROM modifications WHERE table_id = ? AND date = ?', 
+                 (table_id, current_date))
+        
+        # Insérer les nouvelles données
+        c.execute('INSERT INTO modifications (table_id, date, data) VALUES (?, ?, ?)',
+                 (table_id, current_date, data_json))
+        
+        conn.commit()
+        conn.close()
     except Exception as e:
-        print(f"Erreur lors de la sauvegarde des modifications: {e}")
+        print(f"Erreur lors de la sauvegarde dans la base de données: {e}")
 
 def load_modifications(table_id):
-    """Charge les modifications depuis le fichier JSON"""
+    """Charge les modifications depuis SQLite"""
     try:
-        if os.path.exists(MODIFICATIONS_FILE):
-            with open(MODIFICATIONS_FILE, 'r') as f:
-                all_modifications = json.load(f)
-                return all_modifications.get(table_id, None)
+        conn = sqlite3.connect(DB_FILE)
+        c = conn.cursor()
+        current_date = datetime.now().strftime('%Y-%m-%d')
+        
+        c.execute('SELECT data FROM modifications WHERE table_id = ? AND date = ?',
+                 (table_id, current_date))
+        result = c.fetchone()
+        
+        conn.close()
+        
+        if result:
+            return json.loads(result[0])
     except Exception as e:
-        print(f"Erreur lors du chargement des modifications: {e}")
+        print(f"Erreur lors du chargement depuis la base de données: {e}")
     return None
+
+# Initialiser la base de données au démarrage
+init_db()
 
 # Initialisation de l'application Dash
 app = dash.Dash(
@@ -119,12 +147,14 @@ def create_stat_table(df, title, header_color="#edf2f7", add_total=True):
     # Définir quelles colonnes sont éditables
     columns = []
     for col in df.columns:
-        if title == "Statistiques des Appels" and col in ['Type', 'Saint-Denis', 'Total']:
+        if (title == "Statistiques des Appels" and col == 'Type') or \
+           (title == "Statistiques des Dispositifs" and col == 'dispositif') or \
+           (title == "Statistiques des Catégories" and col == 'Catégorie'):
             columns.append({"name": col, "id": col, "editable": False})
         else:
             columns.append({"name": col, "id": col, "editable": True})
     
-    # Style conditionnel pour les cellules non éditables
+    # Style conditionnel pour les cellules non éditables pour les lignes 6-9
     non_editable_style = {
         'if': {
             'filter_query': '{Type} = "Attente la plus longue" || {Type} = "Attente moyenne" || {Type} = "Temps de parole moyen" || {Type} = "Résolution au premier contact"',
