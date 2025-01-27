@@ -1,102 +1,21 @@
 from flask import Flask, request, render_template, jsonify
-from flask_sqlalchemy import SQLAlchemy
 from flask_migrate import Migrate
 from datetime import datetime
 import pandas as pd
-import re
 import os
+
+from models import Dispositif, UniteTraitement, CallStatistics, DayRecord, Ticket, db
 
 app = Flask(__name__)
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///glpi_data.db'
 app.config['UPLOAD_FOLDER'] = 'uploads'
-db = SQLAlchemy(app)
+db.init_app(app)
 migrate = Migrate(app, db)
 
-# Modèles de données
-class Dispositif(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    nom = db.Column(db.String(200), nullable=False)
-    abbreviation = db.Column(db.String(50))
-    tickets = db.relationship('Ticket', backref='dispositif', lazy=True)
-
-    def __repr__(self):
-        return f'<Dispositif {self.nom}>'
-
-class UniteTraitement(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    nom = db.Column(db.String(100), nullable=False, unique=True)
-    call_statistics = db.relationship('CallStatistics', backref='unite_traitement', lazy=True)
-
-class CallStatistics(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    appels_traites = db.Column(db.Integer, nullable=False)
-    appels_escalades = db.Column(db.Integer, nullable=False)
-    appels_abandonnes = db.Column(db.Integer, nullable=False)
-    day_record_id = db.Column(db.Integer, db.ForeignKey('day_record.id'), nullable=False)
-    unite_traitement_id = db.Column(db.Integer, db.ForeignKey('unite_traitement.id'), nullable=False)
-    tickets = db.relationship('Ticket', backref='call_statistics', lazy=True)
-
-class DayRecord(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    date_ouverture = db.Column(db.Date, nullable=False, unique=True)
-    attente_plus_longue = db.Column(db.Integer)  # En secondes
-    attente_moyenne = db.Column(db.Integer)  # En secondes
-    temps_parole_moyen = db.Column(db.Integer)  # En secondes
-    call_statistics = db.relationship('CallStatistics', backref='day_record', lazy=True)
-
-class Ticket(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    numero_ticket = db.Column(db.String(50), unique=True, nullable=False)
-    call_statistics_id = db.Column(db.Integer, db.ForeignKey('call_statistics.id'), nullable=False)
-    dispositif_id = db.Column(db.Integer, db.ForeignKey('dispositif.id'), nullable=False)
-    categorie = db.Column(db.String(100))
-    timestamp = db.Column(db.DateTime)
-
-    def __repr__(self):
-        return f'<Ticket {self.numero_ticket}>'
-
-def extraire_info_titre(titre):
-    """Extrait l'unité de traitement et le dispositif du titre
-    Format: '[UnitéTraitement] - Dispositif (ABBREVIATION)'
-    """
-    pattern = r'\[(.*?)\]\s*-\s*(.*?)(?:\((.*?)\))?$'
-    match = re.match(pattern, titre)
-    
-    if match:
-        unite = match.group(1).strip()
-        dispositif = match.group(2).strip()
-        abbreviation = match.group(3).strip() if match.group(3) else None
-        
-        # Si pas d'abréviation, on la crée à partir du nom du dispositif
-        if not abbreviation:
-            # Prend les premières lettres des mots significatifs
-            mots = [mot for mot in dispositif.split() if len(mot) > 2]  # Ignore les petits mots
-            if mots:
-                abbreviation = ''.join(word[0].upper() for word in mots)
-            else:
-                # Si pas de mots significatifs, prend les 3 premières lettres
-                abbreviation = dispositif[:3].upper()
-            
-        return unite, dispositif, abbreviation
-    return None, None, None
-
-def get_or_create_dispositif(nom, abbreviation):
-    """Récupère ou crée un dispositif"""
-    dispositif = Dispositif.query.filter_by(nom=nom).first()
-    if not dispositif:
-        dispositif = Dispositif(nom=nom, abbreviation=abbreviation)
-        db.session.add(dispositif)
-        db.session.commit()
-    return dispositif
-
-def get_or_create_unite_traitement(nom):
-    """Récupère ou crée une unité de traitement"""
-    unite_traitement = UniteTraitement.query.filter_by(nom=nom).first()
-    if not unite_traitement:
-        unite_traitement = UniteTraitement(nom=nom)
-        db.session.add(unite_traitement)
-        db.session.commit()
-    return unite_traitement
+# Logique de création ou récupération
+from logic.dispositif_logic import get_or_create_dispositif
+from logic.unite_traitement_logic import get_or_create_unite_traitement
+from logic.data_processing import extraire_info_titre
 
 @app.route('/')
 def index():
