@@ -12,8 +12,6 @@ from dash.exceptions import PreventUpdate
 import json
 from dash.dash_table import Format
 import sqlite3
-from weasyprint import HTML, CSS
-from weasyprint.text.fonts import FontConfiguration
 
 # Styles personnalisés
 CUSTOM_STYLE = {
@@ -98,7 +96,7 @@ def load_modifications(table_id, file_date=None):
             date_to_load = file_date
             unique_id = f"{table_id}_{date_to_load}"
         else:
-            date_to_load = datetime.now().strftime('%d-%m-%Y')
+            date_to_load = datetime.now().strftime('%d-%m-%Y %H:%M')
             unique_id = f"{table_id}_{date_to_load}"
         
         # Charger les modifications pour cette date
@@ -148,7 +146,7 @@ navbar = dbc.NavbarSimple(
         dbc.NavItem(dbc.NavLink([html.I(className="fas fa-chart-bar me-2"), "Hebdomadaire"], href="/hebdomadaire", active="exact")),
         dbc.NavItem(dbc.NavLink([html.I(className="fas fa-chart-pie me-2"), "Mensuel"], href="/mensuel", active="exact")),
     ],
-    brand=html.Span([html.I(className="fas fa-tachometer-alt me-2"), "Tableau de Bord LADOM"]),
+    brand=html.Span([html.I(className="fas fa-tachometer-alt me-2"), "Tableau de Bord GLPI"]),
     brand_href="/",
     color="primary",
     dark=True,
@@ -287,19 +285,18 @@ def load_data(file_path):
         
         # Extraire la date de la colonne 'Dernière modification'
         if 'Dernière modification' in df.columns:
-            # Convertir la date en format datetime avec dayfirst=True et garder seulement la date
             file_date = pd.to_datetime(
                 df['Dernière modification'].iloc[0],
                 format='%d-%m-%Y %H:%M',
                 dayfirst=True
-            ).strftime('%d-%m-%Y')  # Retirer les heures
+            ).strftime('%d-%m-%Y %H:%M')
             print(f"Date extraite du fichier: {file_date}")  # Journal
         else:
-            file_date = datetime.now().strftime('%d-%m-%Y')  # Retirer les heures
+            file_date = datetime.now().strftime('%d-%m-%Y %H:%M')
             print("Colonne 'Dernière modification' manquante, date actuelle utilisée.")  # Journal
         
-        # Créer le nom du fichier avec la date (sans les heures)
-        file_name = f"data_{file_date.replace('/', '-')}.csv"
+        # Créer le nom du fichier avec la date
+        file_name = f"data_{file_date.replace(':', '-').replace(' ', '_')}.csv"
         upload_path = os.path.join(UPLOAD_DIRECTORY, file_name)
         df.to_csv(upload_path, index=False, sep=';', encoding='utf-8-sig')
         print(f"Fichier sauvegardé: {upload_path}")  # Journal
@@ -368,106 +365,17 @@ def load_data(file_path):
 
 def create_kpi_card(title, value, icon, color):
     """Crée une carte KPI avec une valeur et une icône"""
-    return dbc.Card([
+    return dbc.Card(
         dbc.CardBody([
             html.Div([
-                # Cercle d'icône avec effet de fond
-                html.Div([
-                    html.I(className=f"fas {icon} fa-2x")
-                ], style={
-                    "background": f"linear-gradient(45deg, {color}22, {color}44)",
-                    "borderRadius": "50%",
-                    "width": "60px",
-                    "height": "60px",
-                    "display": "flex",
-                    "alignItems": "center",
-                    "justifyContent": "center",
-                    "marginBottom": "15px",
-                    "color": color
-                }),
-                html.H4(title, 
-                    className="mb-2",
-                    style={
-                        "color": "#5a5c69",
-                        "fontSize": "1.1rem",
-                        "fontWeight": "bold"
-                    }
-                ),
-                html.H2(
-                    value, 
-                    className="mb-0",
-                    style={
-                        "color": color,
-                        "fontSize": "2rem",
-                        "fontWeight": "bold"
-                    }
-                )
+                html.I(className=f"fas {icon} fa-2x", style={"color": color}),
+                html.H4(title, className="mt-2"),
+                html.H2(value, className="text-center", style={"color": color}),
             ], className="text-center")
-        ])
-    ], className="mb-4", style={
-        "height": "100%",
-        "borderRadius": "15px",
-        "border": "none",
-        "boxShadow": "0 0.15rem 1.75rem 0 rgba(58, 59, 69, 0.15)",
-        "transition": "transform 0.2s",
-        ":hover": {
-            "transform": "translateY(-5px)"
-        }
-    })
-
-def create_dashboard(df):
-    """Crée un tableau de bord avec les KPIs principaux"""
-    if df.empty:
-        return html.Div()
-    
-    kpis = calculate_kpis(df)
-    
-    return dbc.Container([
-        dbc.Row([
-            dbc.Col([
-                create_kpi_card(
-                    "Total Appels",
-                    kpis['total_appels'],
-                    "fa-phone",
-                    "#4e73df"  # Bleu
-                )
-            ], md=4),
-            dbc.Col([
-                create_kpi_card(
-                    "Saint-Denis",
-                    kpis['appels_saint_denis'],
-                    "fa-building",
-                    "#1cc88a"  # Vert
-                )
-            ], md=4),
-            dbc.Col([
-                create_kpi_card(
-                    "Saint-Pierre",
-                    kpis['appels_saint_pierre'],
-                    "fa-building",
-                    "#36b9cc"  # Cyan
-                )
-            ], md=4),
-        ], className="mb-4"),
-        dbc.Row([
-            dbc.Col([
-                create_kpi_card(
-                    "Catégories",
-                    kpis['categories_uniques'],
-                    "fa-tags",
-                    "#f6c23e"  # Jaune
-                )
-            ], md=6),
-            dbc.Col([
-                create_kpi_card(
-                    "Dispositifs",
-                    kpis['dispositifs_uniques'],
-                    "fa-cogs",
-                    "#e74a3b"  # Rouge
-                )
-            ], md=6),
-        ])
-    ], fluid=True, className="mb-4")
+        ]),
+        className="mb-4 hover-shadow",
+        style={"height": "200px"}
+    )
 
 def calculate_kpis(df):
     """Calcule les KPIs principaux"""
@@ -483,386 +391,319 @@ def calculate_kpis(df):
         'dispositifs_uniques': df.attrs['dispositifs'].shape[0]
     }
 
-def create_daily_stats(df):
-    """Crée les statistiques journalières"""
+def create_dashboard(df):
+    """Crée un tableau de bord avec les KPIs principaux"""
     if df.empty:
         return html.Div()
     
-    # Extraire la date du nom du fichier si disponible
-    if 'filename' in df.attrs:
-        date_stats = df.attrs['filename'].replace('data_', '').replace('.csv', '')
-    else:
-        date_stats = datetime.now().strftime('%d-%m-%Y')
+    kpis = calculate_kpis(df)
     
+    return dbc.Container([
+        dbc.Row([
+            dbc.Col([
+                create_kpi_card(
+                    "Total Appels",
+                    kpis['total_appels'],
+                    "fa-phone",
+                    "#28a745"
+                )
+            ], md=4),
+            dbc.Col([
+                create_kpi_card(
+                    "Appels Saint-Denis",
+                    kpis['appels_saint_denis'],
+                    "fa-building",
+                    "#007bff"
+                )
+            ], md=4),
+            dbc.Col([
+                create_kpi_card(
+                    "Appels Saint-Pierre",
+                    kpis['appels_saint_pierre'],
+                    "fa-building",
+                    "#17a2b8"
+                )
+            ], md=4),
+        ]),
+        dbc.Row([
+            dbc.Col([
+                create_kpi_card(
+                    "Catégories",
+                    kpis['categories_uniques'],
+                    "fa-tags",
+                    "#6f42c1"
+                )
+            ], md=6),
+            dbc.Col([
+                create_kpi_card(
+                    "Dispositifs",
+                    kpis['dispositifs_uniques'],
+                    "fa-cogs",
+                    "#fd7e14"
+                )
+            ], md=6),
+        ]),
+    ], fluid=True, className="mb-4")
+
+def create_daily_stats(df):
+    """Crée les statistiques journalières"""
+    if df.empty:
+        return html.Div("Aucune donnée disponible")
+    
+    # Utiliser la date du fichier pour le titre
+    if hasattr(df, 'attrs') and 'file_date' in df.attrs:
+        date_stats = df.attrs['file_date']
+    else:
+        date_stats = datetime.now().strftime('%d-%m-%Y %H:%M')
+    
+    # 1. Tableau Statistiques Dispositif
+    dispositifs_stats = df.attrs['dispositifs'].pivot_table(index='dispositif', columns='ville', values='count', aggfunc='sum', fill_value=0)
+    dispositifs_stats['Total'] = dispositifs_stats.sum(axis=1)
+    dispositifs_stats = dispositifs_stats.reset_index()
+    
+    # 2. Tableau Statistiques Appels
+    appels_stats = pd.DataFrame({
+        'Type': ['Appels reçus', 'Appels traités', 'Appels escaladés', 'Tickets créés', 
+                'Appels abandonnés', 'Attente la plus longue', 'Attente moyenne', 
+                'Temps de parole moyen', 'Résolution au premier contact'],
+        'Saint-Denis': [len(df[df['ville'] == 'Saint-Denis']), 0, 0, 
+                       len(df[df['ville'] == 'Saint-Denis']), 0, '', '', '', ''],
+        'Saint-Pierre': [len(df[df['ville'] == 'Saint-Pierre']), 0, 0,
+                        len(df[df['ville'] == 'Saint-Pierre']), 0, '', '', '', ''],
+    })
+    appels_stats['Total'] = appels_stats.apply(
+        lambda row: float(row['Saint-Denis']) + float(row['Saint-Pierre']) if row['Type'] not in ['Attente la plus longue', 'Attente moyenne', 'Temps de parole moyen', 'Résolution au premier contact'] else '',
+        axis=1
+    )
+
+    # Initialiser les cellules de la colonne 'Saint-Pierre' pour les lignes 6 à 9 avec '00:00:00'
+    for index in range(5, 9):
+        appels_stats.at[index, 'Saint-Pierre'] = '00:00:00'
+
+    # Assurer que les valeurs de la colonne 'Total' pour les lignes 6 à 9 sont explicitement vides
+    for index in range(5, 9):
+        appels_stats.at[index, 'Total'] = ''
+
+    # 3. Tableau Statistiques Catégories
+    categories_stats = df.groupby(['Catégorie', 'ville']).size().unstack(fill_value=0)
+    categories_stats['Total'] = categories_stats.sum(axis=1)
+    categories_stats = categories_stats.reset_index()
+
     return html.Div([
-        # En-tête avec date et bouton export
-        html.Div([
-            html.Div([
-                html.H2([
-                    html.I(className="fas fa-calendar-alt me-3", style={"color": "#4e73df"}),
-                    f"Statistiques du {date_stats}"
-                ], className="mb-0", style={
-                    "color": "#2c3e50",
-                    "fontWeight": "bold",
-                    "fontSize": "2.5rem",
-                    "textTransform": "uppercase",
-                    "letterSpacing": "2px"
-                }),
-                # Bouton Export PDF
-                dbc.Button([
-                    html.I(className="fas fa-file-pdf me-2"),
-                    "Exporter en PDF"
-                ], 
-                id="btn-export-pdf",
-                color="primary",
-                className="ms-3",
-                style={
-                    "backgroundColor": "#4e73df",
-                    "border": "none",
-                    "boxShadow": "0 2px 4px rgba(0,0,0,0.1)"
-                })
-            ], className="d-flex align-items-center justify-content-center mb-4"),
-        ], style={
-            "background": "linear-gradient(120deg, #f8f9fa 0%, #e9ecef 100%)",
-            "padding": "2rem",
-            "borderRadius": "15px",
-            "marginBottom": "2rem",
-            "boxShadow": "0 0.15rem 1.75rem 0 rgba(58, 59, 69, 0.15)"
-        }),
+        html.H2(f"Statistiques du {date_stats}", className="text-xl font-bold mb-4"),
+        # Nouveau ! Ajout du tableau de bord
+        create_dashboard(df),
         
-        # Contenu principal avec style A4 paysage
-        html.Div([
-            # Tableau de bord
-            create_dashboard(df),
-            
-            # Graphiques et tableaux
-            dbc.Row([
-                dbc.Col([
-                    dbc.Card([
-                        dbc.CardHeader(
-                            html.H3("STATISTIQUES DISPOSITIF", className="text-center mb-0"),
-                            style={"background": "#4e73df", "color": "white"}
-                        ),
-                        dbc.CardBody([
-                            create_stat_table(
-                                df.attrs['dispositifs'].pivot_table(
-                                    index='dispositif',
-                                    columns='ville',
-                                    values='count',
-                                    aggfunc='sum',
-                                    fill_value=0
-                                ).reset_index(),
-                                "Statistiques des Dispositifs"
-                            ),
-                            dcc.Graph(
-                                figure=create_bar_chart(
-                                    df.attrs['dispositifs'],
-                                    'dispositif', 'count', 'ville',
-                                    "Répartition par Dispositif"
-                                ),
-                                config={'displayModeBar': False}
-                            )
-                        ])
-                    ])
-                ], md=12, className="mb-4"),
-                
-                dbc.Col([
-                    dbc.Card([
-                        dbc.CardHeader(
-                            html.H3("STATISTIQUES APPELS", className="text-center mb-0"),
-                            style={"background": "#1cc88a", "color": "white"}
-                        ),
-                        dbc.CardBody([
-                            create_stat_table(
-                                pd.DataFrame({
-                                    'Type': ['Appels reçus', 'Appels traités', 'Appels escaladés', 'Tickets créés', 
-                                            'Appels abandonnés', 'Attente la plus longue', 'Attente moyenne', 
-                                            'Temps de parole moyen', 'Résolution au premier contact'],
-                                    'Saint-Denis': [len(df[df['ville'] == 'Saint-Denis']), 0, 0, 
-                                                len(df[df['ville'] == 'Saint-Denis']), 0, '', '', '', ''],
-                                    'Saint-Pierre': [len(df[df['ville'] == 'Saint-Pierre']), 0, 0,
-                                                len(df[df['ville'] == 'Saint-Pierre']), 0, '', '', '', '']
-                                }),
-                                "Statistiques des Appels"
-                            )
-                        ])
-                    ])
-                ], md=12, className="mb-4"),
-                
-                dbc.Col([
-                    dbc.Card([
-                        dbc.CardHeader(
-                            html.H3("STATISTIQUES CATÉGORIES", className="text-center mb-0"),
-                            style={"background": "#36b9cc", "color": "white"}
-                        ),
-                        dbc.CardBody([
-                            create_stat_table(
-                                df.groupby(['Catégorie', 'ville']).size().unstack(fill_value=0).reset_index(),
-                                "Statistiques des Catégories"
-                            ),
-                            dcc.Graph(
-                                figure=create_bar_chart(
-                                    df.groupby(['Catégorie', 'ville']).size().reset_index(name='count'),
-                                    'Catégorie', 'count', 'ville',
-                                    "Répartition par Catégorie"
-                                ),
-                                config={'displayModeBar': False}
-                            )
-                        ])
-                    ])
-                ], md=12)
+        # Section 1: Statistiques Dispositif
+        dbc.Card([
+            dbc.CardHeader(html.H3("STATISTIQUES DISPOSITIF", className="text-center")),
+            dbc.CardBody([
+                create_stat_table(
+                    dispositifs_stats,
+                    "Statistiques des Dispositifs"
+                ),
+                dcc.Graph(figure=create_bar_chart(
+                    df.attrs['dispositifs'],
+                    'dispositif', 'count', 'ville',
+                    "Statistiques des Dispositifs"
+                ))
             ])
-        ], style={
-            "width": "297mm",  # Largeur A4
-            "height": "210mm",  # Hauteur A4 en paysage
-            "margin": "auto",
-            "padding": "20px",
-            "backgroundColor": "white"
-        }, id="content-to-export")
-    ], className="container-fluid py-4")
+        ], className="mb-4"),
+        
+        # Section 2: Statistiques Appels
+        dbc.Card([
+            dbc.CardHeader(html.H3("STATISTIQUES APPELS", className="text-center")),
+            dbc.CardBody([
+                create_stat_table(
+                    appels_stats,
+                    "Statistiques des Appels"
+                ),
+                dcc.Graph(figure=create_bar_chart(
+                    appels_stats[appels_stats['Type'].isin(['Appels reçus', 'Appels traités', 'Tickets créés'])],
+                    'Type', 'Total', 'Type',
+                    "Statistiques des Appels"
+                ))
+            ])
+        ], className="mb-4"),
+        
+        # Section 3: Statistiques Catégories
+        dbc.Card([
+            dbc.CardHeader(html.H3("STATISTIQUES CATÉGORIES", className="text-center")),
+            dbc.CardBody([
+                create_stat_table(
+                    categories_stats,
+                    "Statistiques des Catégories"
+                ),
+                dcc.Graph(figure=create_bar_chart(
+                    df.groupby(['Catégorie', 'ville']).size().reset_index(name='count'),
+                    'Catégorie', 'count', 'ville',
+                    "Statistiques des Catégories"
+                ))
+            ])
+        ])
+    ], className="container")
 
 def get_recent_files():
-    """Récupère la liste des 10 fichiers les plus récents dans le dossier upload"""
+    """Récupère la liste des fichiers récents dans le dossier upload"""
     files = []
     for file in os.listdir(UPLOAD_DIRECTORY):
         if file.endswith('.csv') and file.startswith('data_'):
             try:
                 file_path = os.path.join(UPLOAD_DIRECTORY, file)
-                # Extraire la date complète du nom du fichier (format: data_DD-MM-YYYY.csv)
-                date_str = file.replace('data_', '').replace('.csv', '')
-                files.append({
-                    'path': file_path,
-                    'date': date_str,
-                    'name': file
-                })
+                # Extraire la date du nom du fichier (format: data_DD-MM-YYYY_HH-MM.csv)
+                date_parts = file.replace('data_', '').replace('.csv', '').split('_')
+                if len(date_parts) >= 2:
+                    date_str = date_parts[0] + ' ' + date_parts[1].replace('-', ':')
+                    files.append({
+                        'path': file_path,
+                        'date': date_str,
+                        'name': file
+                    })
             except Exception as e:
                 print(f"Erreur lors du traitement du fichier {file}: {e}")
                 continue
     
-    # Trier par date décroissante et prendre les 10 plus récents
-    return sorted(files, key=lambda x: x['date'], reverse=True)[:10]
+    # Trier par date décroissante
+    return sorted(files, key=lambda x: x['date'], reverse=True)
 
 def create_home_layout():
     """Crée le layout de la page d'accueil"""
     recent_files = get_recent_files()
     
     recent_files_list = html.Div([
-        html.H3("Fichiers récents"),
+        html.H3("Fichiers récents", className="text-lg font-bold mb-2"),
         html.Ul([
-            html.Li(
+            html.Li([
                 html.A(
                     f"Statistiques du {file['date']}", 
-                    href=f"/journalier?file={file['name']}"
+                    href=f"/journalier?file={file['name']}", 
+                    className="text-blue-600 hover:text-blue-800"
                 )
-            ) for file in recent_files
-        ])
+            ]) for file in recent_files
+        ], className="list-disc pl-5")
     ]) if recent_files else html.Div("Aucun fichier récent")
     
     return html.Div([
-        # Hero Section avec un fond plus moderne
+        # Hero Section
         dbc.Container([
             dbc.Row([
                 dbc.Col([
                     html.Div([
                         html.H1([
-                            html.I(className="fas fa-tachometer-alt me-3", style={"color": "#1cc88a"}),
-                            "Tableau de bord LADOM"
-                        ], className="display-3 mb-4", style={"color": "#2c3e50", "font-weight": "bold"}),
-                        html.P([
-                            "Plateforme de gestion et d'analyse des appels ",
-                            html.Strong("LADOM Saint-Denis et Saint-Pierre")
-                        ], className="lead mb-4", style={"color": "#34495e", "font-size": "1.5rem"}),
-                        html.Hr(className="my-4", style={"border-color": "#1cc88a", "border-width": "2px"}),
-                    ], className="text-center py-5", style={
-                        "background": "linear-gradient(120deg, #f8f9fa 0%, #e9ecef 100%)",
-                        "border-radius": "15px",
-                        "box-shadow": "0 4px 15px rgba(0,0,0,0.1)"
-                    })
+                            html.I(className="fas fa-tachometer-alt me-3"),
+                            "Tableau de Bord GLPI"
+                        ], className="display-4 mb-4"),
+                        html.P(
+                            "Analysez vos données d'appels et générez des rapports détaillés",
+                            className="lead mb-4"
+                        ),
+                        html.Hr(className="my-4"),
+                    ], className="text-center py-5")
                 ])
             ], className="mb-5")
-        ], fluid=True, className="py-5"),
+        ], fluid=True, className="bg-light py-3"),
         
         # Main Content
         dbc.Container([
             dbc.Row([
-                # Section Upload avec style amélioré
+                # Section Upload
                 dbc.Col([
                     dbc.Card([
                         dbc.CardHeader([
                             html.H4([
-                                html.I(className="fas fa-upload me-2", style={"color": "#4e73df"}),
+                                html.I(className="fas fa-upload me-2"),
                                 "Importer un fichier"
                             ], className="mb-0")
-                        ], style={"background": "#4e73df", "color": "white"}),
+                        ], className="bg-primary text-white"),
                         dbc.CardBody([
                             dcc.Upload(
                                 id='upload-data',
                                 children=html.Div([
-                                    html.I(className="fas fa-cloud-upload-alt fa-3x mb-3", style={"color": "#4e73df"}),
-                                    html.Div("Glissez-déposez un fichier CSV ici ou", style={"color": "#5a5c69"}),
+                                    html.I(className="fas fa-cloud-upload-alt fa-3x mb-3"),
+                                    html.Div("Glissez-déposez un fichier CSV ici ou"),
                                     dbc.Button(
                                         "Parcourir",
                                         color="primary",
                                         size="sm",
-                                        className="mt-3 px-4",
-                                        style={"background": "#4e73df"}
+                                        className="mt-2"
                                     ),
                                 ], className="text-center"),
-                                style={
-                                    'width': '100%',
-                                    'height': '200px',
-                                    'lineHeight': '60px',
-                                    'borderWidth': '2px',
-                                    'borderStyle': 'dashed',
-                                    'borderRadius': '10px',
-                                    'borderColor': '#4e73df',
-                                    'textAlign': 'center',
-                                    'margin': '10px 0',
-                                    'display': 'flex',
-                                    'flexDirection': 'column',
-                                    'justifyContent': 'center',
-                                    'alignItems': 'center',
-                                    'backgroundColor': '#f8f9fc'
-                                },
+                                style=UPLOAD_STYLE,
                                 multiple=False,
                                 accept='.csv'
                             ),
                             html.Div(id='output-data-upload'),
                             dbc.Alert([
                                 html.I(className="fas fa-info-circle me-2"),
-                                "Format accepté : fichier CSV exporté depuis GLPI"
+                                "Seuls les fichiers CSV sont acceptés"
                             ], color="info", className="mt-3")
-                        ], style={"background": "white"})
-                    ], className="mb-4", style={"box-shadow": "0 0.15rem 1.75rem 0 rgba(58, 59, 69, 0.15)"})
+                        ])
+                    ], className="mb-4 hover-shadow")
                 ], md=6),
                 
-                # Section Fichiers Récents avec style amélioré
+                # Section Fichiers Récents
                 dbc.Col([
                     dbc.Card([
                         dbc.CardHeader([
                             html.H4([
-                                html.I(className="fas fa-history me-2", style={"color": "#1cc88a"}),
+                                html.I(className="fas fa-history me-2"),
                                 "Fichiers Récents"
                             ], className="mb-0")
-                        ], style={"background": "#1cc88a", "color": "white"}),
+                        ], className="bg-success text-white"),
                         dbc.CardBody([
                             recent_files_list
-                        ], style={"background": "white"})
-                    ], className="mb-4", style={"box-shadow": "0 0.15rem 1.75rem 0 rgba(58, 59, 69, 0.15)"})
+                        ])
+                    ], className="mb-4 hover-shadow")
                 ], md=6)
             ]),
             
-            # Guide d'utilisation mis à jour
+            # Section Guide
             dbc.Row([
                 dbc.Col([
                     dbc.Card([
                         dbc.CardHeader([
                             html.H4([
-                                html.I(className="fas fa-book me-2", style={"color": "#36b9cc"}),
-                                "Guide d'utilisation LADOM"
+                                html.I(className="fas fa-book me-2"),
+                                "Guide d'utilisation"
                             ], className="mb-0")
-                        ], style={"background": "#36b9cc", "color": "white"}),
+                        ], className="bg-info text-white"),
                         dbc.CardBody([
                             dbc.Row([
                                 dbc.Col([
                                     html.Div([
-                                        html.I(className="fas fa-file-upload fa-2x mb-3", style={"color": "#36b9cc"}),
-                                        html.H5("1. Import des données", className="mb-2"),
-                                        html.P([
-                                            "Importez votre fichier CSV exporté depuis GLPI",
-                                            html.Br(),
-                                            "Format requis : données d'appels LADOM"
-                                        ], className="text-muted")
+                                        html.I(className="fas fa-file-upload fa-2x mb-3 text-info"),
+                                        html.H5("1. Import", className="mb-2"),
+                                        html.P("Uploadez votre fichier CSV via le formulaire", className="text-muted")
                                     ], className="text-center")
                                 ], md=3),
                                 dbc.Col([
                                     html.Div([
-                                        html.I(className="fas fa-chart-bar fa-2x mb-3", style={"color": "#36b9cc"}),
-                                        html.H5("2. Statistiques journalières", className="mb-2"),
-                                        html.P([
-                                            "Visualisez les statistiques par site",
-                                            html.Br(),
-                                            "Saint-Denis et Saint-Pierre"
-                                        ], className="text-muted")
+                                        html.I(className="fas fa-chart-pie fa-2x mb-3 text-info"),
+                                        html.H5("2. Analyse", className="mb-2"),
+                                        html.P("Visualisez les statistiques générées", className="text-muted")
                                     ], className="text-center")
                                 ], md=3),
                                 dbc.Col([
                                     html.Div([
-                                        html.I(className="fas fa-clock fa-2x mb-3", style={"color": "#36b9cc"}),
-                                        html.H5("3. Temps d'appels", className="mb-2"),
-                                        html.P([
-                                            "Suivez les temps d'attente",
-                                            html.Br(),
-                                            "et de traitement des appels"
-                                        ], className="text-muted")
+                                        html.I(className="fas fa-filter fa-2x mb-3 text-info"),
+                                        html.H5("3. Filtrage", className="mb-2"),
+                                        html.P("Filtrez les données par catégorie", className="text-muted")
                                     ], className="text-center")
                                 ], md=3),
                                 dbc.Col([
                                     html.Div([
-                                        html.I(className="fas fa-tasks fa-2x mb-3", style={"color": "#36b9cc"}),
-                                        html.H5("4. Catégories", className="mb-2"),
-                                        html.P([
-                                            "Analysez la répartition",
-                                            html.Br(),
-                                            "des appels par catégorie"
-                                        ], className="text-muted")
+                                        html.I(className="fas fa-download fa-2x mb-3 text-info"),
+                                        html.H5("4. Export", className="mb-2"),
+                                        html.P("Exportez vos rapports en PDF", className="text-muted")
                                     ], className="text-center")
                                 ], md=3),
                             ])
-                        ], style={"background": "white"})
-                    ], className="mb-4", style={"box-shadow": "0 0.15rem 1.75rem 0 rgba(58, 59, 69, 0.15)"})
+                        ])
+                    ], className="mb-4 hover-shadow")
                 ])
             ])
         ], fluid=True)
     ])
-
-def display_page(pathname, search):
-    if pathname == '/':
-        return create_home_layout()
-    
-    elif pathname == '/journalier':
-        if search:
-            filename = search.split('=')[1]
-            filepath = os.path.join(UPLOAD_DIRECTORY, filename)
-            if os.path.exists(filepath):
-                df = load_data(filepath)
-                return create_daily_stats(df)
-        
-        # Si pas de fichier spécifié, montrer la liste des fichiers
-        files = get_recent_files()
-        return html.Div([
-            html.H3("Fichiers Disponibles", className="text-center mb-4"),
-            dbc.Row([
-                dbc.Col([
-                    dbc.Card([
-                        dbc.CardBody([
-                            html.H5(f"Statistiques du {file['date']}", className="card-title"),
-                            html.P(f"Fichier: {file['name']}", className="text-muted small"),
-                            dbc.Button(
-                                [html.I(className="fas fa-chart-bar me-2"), "Voir les Statistiques"],
-                                href=f"/journalier?file={file['name']}", 
-                                color="primary",
-                                className="mt-2 w-100"
-                            )
-                        ])
-                    ], className="mb-3")
-                ], md=4) for file in files
-            ])
-        ], className="container py-4")
-    
-    elif pathname == '/hebdomadaire':
-        return dbc.Alert([
-            html.I(className="fas fa-tools me-2"),
-            "Statistiques Hebdomadaires - En développement"
-        ], color="secondary", className="m-4")
-    
-    elif pathname == '/mensuel':
-        return dbc.Alert([
-            html.I(className="fas fa-tools me-2"),
-            "Statistiques Mensuelles - En développement"
-        ], color="secondary", className="m-4")
-    
-    return html.Div("404 - Page non trouvée")
 
 @app.callback(
     Output('table-statistiques-des-appels', 'data'),
@@ -915,13 +756,13 @@ def update_output(contents, filename):
                     df['Dernière modification'].iloc[0],
                     format='%d-%m-%Y %H:%M',
                     dayfirst=True
-                ).strftime('%d-%m-%Y')  # Retirer les heures
+                ).strftime('%d-%m-%Y %H:%M')
                 print(f"Date extraite du fichier: {file_date}")  # Journal
             else:
                 raise ValueError("Colonne 'Dernière modification' manquante dans le fichier CSV.")
             
-            # Créer le nom de fichier avec la date (sans les heures)
-            new_filename = f"data_{file_date.replace('/', '-')}.csv"
+            # Créer le nom de fichier avec la date
+            new_filename = f"data_{file_date.replace(':', '-').replace(' ', '_')}.csv"
             filepath = os.path.join(UPLOAD_DIRECTORY, new_filename)
             
             # Déplacer le fichier temporaire vers son emplacement final
@@ -970,24 +811,27 @@ def display_page(pathname, search):
         # Si pas de fichier spécifié, montrer la liste des fichiers
         files = get_recent_files()
         return html.Div([
-            html.H3("Fichiers Disponibles", className="text-center mb-4"),
-            dbc.Row([
-                dbc.Col([
-                    dbc.Card([
-                        dbc.CardBody([
-                            html.H5(f"Statistiques du {file['date']}", className="card-title"),
-                            html.P(f"Fichier: {file['name']}", className="text-muted small"),
-                            dbc.Button(
-                                [html.I(className="fas fa-chart-bar me-2"), "Voir les Statistiques"],
-                                href=f"/journalier?file={file['name']}", 
-                                color="primary",
-                                className="mt-2 w-100"
-                            )
-                        ])
-                    ], className="mb-3")
-                ], md=4) for file in files
-            ])
-        ], className="container py-4")
+            html.H3("Fichiers Disponibles"),
+            dbc.Table(
+                [
+                    html.Thead(html.Tr([html.Th("Date"), html.Th("Action")]))
+                ] + [
+                    html.Tr([
+                        html.Td(file['date']),
+                        html.Td(dbc.Button(
+                            "Voir Tableau de Bord", 
+                            href=f"/journalier?file={file['name']}", 
+                            color="primary", 
+                            size="sm"
+                        ))
+                    ]) for file in files
+                ],
+                bordered=True,
+                hover=True,
+                responsive=True,
+                striped=True
+            )
+        ])
     
     elif pathname == '/hebdomadaire':
         return dbc.Alert([
@@ -1007,62 +851,8 @@ def display_page(pathname, search):
 app.layout = html.Div([
     navbar,
     dcc.Location(id='url', refresh=False),
-    dcc.Download(id="download-pdf"),
     html.Div(id='page-content')
 ])
-
-def generate_pdf():
-    """Génère un PDF à partir du contenu de la page"""
-    from weasyprint import HTML, CSS
-    from weasyprint.text.fonts import FontConfiguration
-
-    # Configuration des polices
-    font_config = FontConfiguration()
-    
-    # CSS pour le format A4 paysage
-    css = CSS(string='''
-        @page {
-            size: A4 landscape;
-            margin: 1cm;
-        }
-        body {
-            font-family: Arial, sans-serif;
-        }
-        .card {
-            break-inside: avoid;
-            margin-bottom: 20px;
-        }
-        .table {
-            width: 100%;
-            border-collapse: collapse;
-            margin-bottom: 1rem;
-        }
-        .table th, .table td {
-            border: 1px solid #dee2e6;
-            padding: 8px;
-        }
-        .table th {
-            background-color: #f8f9fa;
-        }
-    ''', font_config=font_config)
-
-    # Chemin du fichier PDF
-    pdf_path = "rapport.pdf"
-    
-    # Générer le PDF
-    HTML(string=html_content).write_pdf(pdf_path, stylesheets=[css], font_config=font_config)
-    
-    return pdf_path
-
-@app.callback(
-    Output("download-pdf", "data"),
-    Input("btn-export-pdf", "n_clicks"),
-    prevent_initial_call=True
-)
-def export_pdf(n_clicks):
-    if n_clicks:
-        pdf_path = generate_pdf()
-        return dcc.send_file(pdf_path)
 
 if __name__ == '__main__':
     app.run_server(debug=True)
