@@ -18,18 +18,40 @@ class Dispositif(db.Model):
     nom = db.Column(db.String(200), nullable=False)
     abbreviation = db.Column(db.String(50))
     tickets = db.relationship('Ticket', backref='dispositif', lazy=True)
-    
+
     def __repr__(self):
         return f'<Dispositif {self.nom}>'
 
+class UniteTraitement(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    nom = db.Column(db.String(100), nullable=False, unique=True)
+    call_statistics = db.relationship('CallStatistics', backref='unite_traitement', lazy=True)
+
+class CallStatistics(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    appels_traites = db.Column(db.Integer, nullable=False)
+    appels_escalades = db.Column(db.Integer, nullable=False)
+    appels_abandonnes = db.Column(db.Integer, nullable=False)
+    day_record_id = db.Column(db.Integer, db.ForeignKey('day_record.id'), nullable=False)
+    unite_traitement_id = db.Column(db.Integer, db.ForeignKey('unite_traitement.id'), nullable=False)
+    tickets = db.relationship('Ticket', backref='call_statistics', lazy=True)
+
+class DayRecord(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    date_ouverture = db.Column(db.Date, nullable=False, unique=True)
+    attente_plus_longue = db.Column(db.Integer)  # En secondes
+    attente_moyenne = db.Column(db.Integer)  # En secondes
+    temps_parole_moyen = db.Column(db.Integer)  # En secondes
+    call_statistics = db.relationship('CallStatistics', backref='day_record', lazy=True)
+
 class Ticket(db.Model):
     id = db.Column(db.Integer, primary_key=True)
-    numero_ticket = db.Column(db.String(50), unique=True, nullable=False)  # ID du fichier GLPI
-    unite_traitement = db.Column(db.String(100))
+    numero_ticket = db.Column(db.String(50), unique=True, nullable=False)
+    call_statistics_id = db.Column(db.Integer, db.ForeignKey('call_statistics.id'), nullable=False)
     dispositif_id = db.Column(db.Integer, db.ForeignKey('dispositif.id'), nullable=False)
     categorie = db.Column(db.String(100))
-    date_ouverture = db.Column(db.DateTime)
-    
+    timestamp = db.Column(db.DateTime)
+
     def __repr__(self):
         return f'<Ticket {self.numero_ticket}>'
 
@@ -67,6 +89,15 @@ def get_or_create_dispositif(nom, abbreviation):
         db.session.commit()
     return dispositif
 
+def get_or_create_unite_traitement(nom):
+    """Récupère ou crée une unité de traitement"""
+    unite_traitement = UniteTraitement.query.filter_by(nom=nom).first()
+    if not unite_traitement:
+        unite_traitement = UniteTraitement(nom=nom)
+        db.session.add(unite_traitement)
+        db.session.commit()
+    return unite_traitement
+
 @app.route('/')
 def index():
     return render_template('index.html')
@@ -85,20 +116,20 @@ def get_tickets():
     # Mapping des colonnes pour le tri
     columns = {
         0: Ticket.numero_ticket,
-        1: Ticket.unite_traitement,
+        1: UniteTraitement.nom,
         2: Dispositif.nom,
         3: Ticket.categorie,
-        4: Ticket.date_ouverture
+        4: Ticket.timestamp
     }
     
-    query = Ticket.query.join(Dispositif)
+    query = Ticket.query.join(CallStatistics).join(UniteTraitement).join(Dispositif)
     
     # Recherche
     if search:
         query = query.filter(
             db.or_(
                 Ticket.numero_ticket.contains(search),
-                Ticket.unite_traitement.contains(search),
+                UniteTraitement.nom.contains(search),
                 Dispositif.nom.contains(search),
                 Ticket.categorie.contains(search)
             )
@@ -123,10 +154,10 @@ def get_tickets():
     
     data = [{
         'numero_ticket': ticket.numero_ticket,
-        'unite_traitement': ticket.unite_traitement,
+        'unite_traitement': ticket.call_statistics.unite_traitement.nom,
         'dispositif': ticket.dispositif.nom,
         'categorie': ticket.categorie,
-        'date_ouverture': ticket.date_ouverture.strftime('%d-%m-%Y %H:%M')
+        'date_ouverture': ticket.timestamp.strftime('%d-%m-%Y %H:%M')
     } for ticket in tickets]
     
     return jsonify({
@@ -159,31 +190,59 @@ def upload_file():
             if not all([unite, dispositif_nom]):
                 continue
                 
+            # Création ou récupération de l'unité de traitement
+            unite_traitement = get_or_create_unite_traitement(unite)
+            
             # Création ou récupération du dispositif
             dispositif = get_or_create_dispositif(dispositif_nom, abbreviation)
             
-            # Création du ticket
+            # Corriger l'analyse de la date pour inclure l'heure
             try:
                 date_ouverture = datetime.strptime(row['Date d\'ouverture'], '%d-%m-%Y %H:%M')
             except ValueError:
-                # Essayer l'autre format possible
-                try:
-                    date_ouverture = datetime.strptime(row['Date d\'ouverture'], '%Y-%m-%d %H:%M:%S')
-                except ValueError:
-                    # Si la date est invalide, on utilise la date actuelle
-                    date_ouverture = datetime.now()
+                # Essayer un autre format possible
+                date_ouverture = datetime.strptime(row['Date d\'ouverture'], '%Y-%m-%d %H:%M:%S')
             
-            # Vérifier si le ticket existe déjà
-            existing_ticket = Ticket.query.filter_by(numero_ticket=row['ID']).first()
-            if not existing_ticket:
-                ticket = Ticket(
-                    numero_ticket=row['ID'],
-                    unite_traitement=unite,
-                    dispositif_id=dispositif.id,
-                    categorie=row['Catégorie'],
-                    date_ouverture=date_ouverture
+            # Vérifier si le jour existe déjà dans DayRecord
+            day_record = DayRecord.query.filter_by(date_ouverture=date_ouverture.date()).first()
+            if not day_record:
+                day_record = DayRecord(date_ouverture=date_ouverture.date())
+                db.session.add(day_record)
+                db.session.commit()
+
+            # Exemple de traitement pour les statistiques d'appels
+            appels_traites = int(row.get('Appels Traités', 0))
+            appels_escalades = int(row.get('Appels Escaladés', 0))
+            appels_abandonnes = int(row.get('Appels Abandonnés', 0))
+
+            # Vérifier si la statistique d'appels existe déjà pour le jour et l'unité de traitement
+            call_stat = CallStatistics.query.filter_by(day_record_id=day_record.id, unite_traitement_id=unite_traitement.id).first()
+            if not call_stat:
+                call_stat = CallStatistics(
+                    appels_traites=appels_traites,
+                    appels_escalades=appels_escalades,
+                    appels_abandonnes=appels_abandonnes,
+                    day_record_id=day_record.id,
+                    unite_traitement_id=unite_traitement.id
                 )
-                db.session.add(ticket)
+                db.session.add(call_stat)
+                db.session.commit()  # Assurez-vous de commettre pour obtenir l'ID
+            else:
+                # Mettre à jour les statistiques existantes
+                call_stat.appels_traites += appels_traites
+                call_stat.appels_escalades += appels_escalades
+                call_stat.appels_abandonnes += appels_abandonnes
+                db.session.commit()  # Assurez-vous de commettre les mises à jour
+
+            # Lier le ticket à la statistique d'appels
+            ticket = Ticket(
+                numero_ticket=row['ID'],
+                call_statistics_id=call_stat.id,
+                dispositif_id=dispositif.id,
+                categorie=row['Catégorie'],
+                timestamp=date_ouverture
+            )
+            db.session.add(ticket)
         
         db.session.commit()
         return jsonify({'message': 'Fichier traité avec succès'})
@@ -197,6 +256,9 @@ def reset_database():
     try:
         # Suppression de toutes les données
         Ticket.query.delete()
+        CallStatistics.query.delete()
+        DayRecord.query.delete()
+        UniteTraitement.query.delete()
         Dispositif.query.delete()
         db.session.commit()
         return jsonify({'message': 'Base de données réinitialisée avec succès'})
