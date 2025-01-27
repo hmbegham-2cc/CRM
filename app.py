@@ -43,14 +43,27 @@ def get_tickets():
     
     query = Ticket.query.join(CallStatistics).join(UniteTraitement).join(Dispositif)
     
+    # Filtrage par date
+    start_date = request.args.get('start_date')
+    end_date = request.args.get('end_date')
+
+    if start_date:
+        start_date = datetime.strptime(start_date, '%Y-%m-%d')
+        start_date = start_date.replace(hour=0, minute=0, second=0)
+        query = query.filter(Ticket.timestamp >= start_date)
+    if end_date:
+        end_date = datetime.strptime(end_date, '%Y-%m-%d')
+        end_date = end_date.replace(hour=23, minute=59, second=59)
+        query = query.filter(Ticket.timestamp <= end_date)
+
     # Recherche
     if search:
         query = query.filter(
             db.or_(
-                Ticket.numero_ticket.contains(search),
-                UniteTraitement.nom.contains(search),
-                Dispositif.nom.contains(search),
-                Ticket.categorie.contains(search)
+                Ticket.numero_ticket.ilike(f'%{search}%'),
+                UniteTraitement.nom.ilike(f'%{search}%'),
+                Dispositif.nom.ilike(f'%{search}%'),
+                Ticket.categorie.ilike(f'%{search}%')
             )
         )
     
@@ -76,7 +89,7 @@ def get_tickets():
         'unite_traitement': ticket.call_statistics.unite_traitement.nom,
         'dispositif': ticket.dispositif.nom,
         'categorie': ticket.categorie,
-        'date_ouverture': ticket.timestamp.strftime('%d-%m-%Y %H:%M')
+        'date_ouverture': ticket.timestamp.strftime('%d-%m-%Y %H:%M') if ticket.timestamp else ''
     } for ticket in tickets]
     
     return jsonify({

@@ -26,6 +26,67 @@
             border-radius: 4px;
             box-shadow: 0 0 10px rgba(0,0,0,0.1);
         }
+        .filter-section {
+            background: #f8f9fa;
+            padding: 20px;
+            border-radius: 8px;
+            margin: 20px 0;
+            box-shadow: 0 2px 2px rgba(0,0,0,0.1);
+        }
+
+        .date-filter {
+            display: flex;
+            gap: 15px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+
+        .date-filter .form-group {
+            flex: 1;
+            min-width: 200px;
+        }
+
+        .date-filter label {
+            display: block;
+            margin-bottom: 5px;
+            color: #495057;
+            font-weight: 500;
+        }
+
+        .date-filter input[type="date"] {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #ced4da;
+            border-radius: 4px;
+        }
+
+        .filter-buttons {
+            display: flex;
+            gap: 10px;
+        }
+
+        .btn-filter {
+            padding: 8px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        .btn-apply {
+            background-color: #007bff;
+            color: white;
+            border: none;
+        }
+
+        .btn-reset {
+            background-color: #6c757d;
+            color: white;
+            border: none;
+        }
+
+        .btn-filter:hover {
+            opacity: 0.9;
+        }
     </style>
 </head>
 <body class="bg-light">
@@ -56,6 +117,29 @@
         </div>
 
         <div id="alert-container" class="mt-3"></div>
+
+        <div class="filter-section">
+            <h3 class="h5 mb-3">Filter by Date Range</h3>
+            <div class="date-filter">
+                <div class="form-group">
+                    <label for="start-date">Start Date:</label>
+                    <input type="date" id="start-date" name="start-date" class="form-control">
+                </div>
+
+                <div class="form-group">
+                    <label for="end-date">End Date:</label>
+                    <input type="date" id="end-date" name="end-date" class="form-control">
+                </div>
+
+                <div>
+                    <label style="color: rgba(0, 0, 0, 0);">Buttons:</label>
+                    <div class="filter-buttons">
+                        <button id="filter-dates" class="btn-filter btn-apply">Apply Filter</button>
+                        <button id="reset-filter" class="btn-filter btn-reset">Reset Filter</button>
+                    </div>
+                </div>
+            </div>
+        </div>
 
         <div class="table-container">
             <h2 class="h4 mb-3">Liste des tickets importés</h2>
@@ -88,9 +172,9 @@
                 serverSide: true,
                 ajax: {
                     url: '/tickets',
-                    type: 'GET',
                     data: function(d) {
-                        // Ajouter des paramètres supplémentaires si nécessaire
+                        d.start_date = document.getElementById('start-date').value;
+                        d.end_date = document.getElementById('end-date').value;
                         return d;
                     }
                 },
@@ -128,6 +212,31 @@
                 // Activer le tri sur toutes les colonnes
                 ordering: true,
                 orderMulti: false // Désactiver le tri multiple pour simplifier
+            });
+
+            // Refresh table when filter is applied
+            document.getElementById('filter-dates').addEventListener('click', function() {
+                const startDate = document.getElementById('start-date').value;
+                const endDate = document.getElementById('end-date').value;
+                
+                if (!startDate && !endDate) {
+                    showAlert('Please select at least one date', 'warning');
+                    return;
+                }
+                
+                if (startDate && endDate && startDate > endDate) {
+                    showAlert('Start date cannot be after end date', 'warning');
+                    return;
+                }
+
+                ticketsTable.ajax.reload();
+            });
+
+            // Reset filter and reload table
+            document.getElementById('reset-filter').addEventListener('click', function() {
+                document.getElementById('start-date').value = '';
+                document.getElementById('end-date').value = '';
+                ticketsTable.ajax.reload();
             });
         });
 
@@ -251,6 +360,19 @@
                 }
             } catch (error) {
                 showAlert('Erreur lors de la réinitialisation de la base de données', 'danger');
+            }
+        }
+
+        window.onload = function() {
+            const urlParams = new URLSearchParams(window.location.search);
+            const startDate = urlParams.get('start_date');
+            const endDate = urlParams.get('end_date');
+            
+            if (startDate) {
+                document.getElementById('start-date').value = startDate;
+            }
+            if (endDate) {
+                document.getElementById('end-date').value = endDate;
             }
         }
     </script>
