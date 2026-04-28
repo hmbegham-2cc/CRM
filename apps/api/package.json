@@ -5,7 +5,7 @@
   "type": "commonjs",
   "scripts": {
     "dev": "tsx watch src/server.ts",
-    "build": "esbuild src/server.ts --bundle --platform=node --format=cjs --outfile=dist/server.cjs --external:@prisma/client --external:prisma --external:@getbrevo/brevo --external:exceljs --external:node-cron",
+    "build": "esbuild src/server.ts --bundle --platform=node --format=cjs --outfile=../../api/_server.cjs --external:@prisma/client --external:prisma",
     "start": "node dist/server.cjs",
     "lint": "echo \"No lint for @crc/api\""
   },

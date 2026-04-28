@@ -1,5 +1,6 @@
-// Vercel serverless entry point - CommonJS handler
-const app = require('../apps/api/dist/server.cjs').default;
+// Vercel serverless entry point
+// The API is bundled into api/_server.cjs by esbuild during build
+const app = require('./_server.cjs').default;
 
 module.exports = async function handler(req, res) {
   try {

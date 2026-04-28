@@ -12,3 +12,4 @@ apps/api/node_modules
 packages/db/node_modules
 packages/types/node_modules
 packages/config/node_modules
+api/_server.cjs
