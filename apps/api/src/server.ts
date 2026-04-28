@@ -2,7 +2,7 @@ import "dotenv/config";
 import cors from "cors";
 import express from "express";
 import ExcelJS from "exceljs";
-import { prisma } from "@crc/db";
+import { PrismaClient } from "@prisma/client";
 import { requireAuth, requireRole, signToken } from "./auth.js";
 import type { AuthRequest } from "./types.js";
 import {
@@ -24,6 +24,13 @@ import * as Brevo from "@getbrevo/brevo";
 import bcrypt from "bcryptjs";
 
 const isVercel = Boolean(process.env.VERCEL);
+
+// Prisma client singleton for serverless
+const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient };
+export const prisma = globalForPrisma.prisma ?? new PrismaClient();
+if (process.env.NODE_ENV !== "production") {
+  globalForPrisma.prisma = prisma;
+}
 
 function getBrevoClient() {
   const apiKey = process.env.BREVO_API_KEY;
