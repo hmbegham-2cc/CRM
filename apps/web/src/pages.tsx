@@ -1885,8 +1885,7 @@ export function LoginPage() {
                 // Add timeout for API call
                 const controller = new AbortController();
                 const timeoutId = setTimeout(() => controller.abort(), 10000);
-                
-                await login(email, password);
+                await login(email, password, { signal: controller.signal });
                 clearTimeout(timeoutId);
               } catch (err: any) {
                 console.error('Login error:', err);

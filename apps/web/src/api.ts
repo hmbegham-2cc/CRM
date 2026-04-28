@@ -3,11 +3,21 @@ const API_BASE =
 
 type Method = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 
+type RequestOptions = {
+  signal?: AbortSignal;
+};
+
 function token() {
   return localStorage.getItem("crc_token");
 }
 
-export async function request<T>(path: string, method: Method = "GET", body?: unknown, isBlob = false): Promise<T> {
+export async function request<T>(
+  path: string,
+  method: Method = "GET",
+  body?: unknown,
+  isBlob = false,
+  options: RequestOptions = {},
+): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
     method,
     headers: {
@@ -15,6 +25,7 @@ export async function request<T>(path: string, method: Method = "GET", body?: un
       ...(token() ? { Authorization: `Bearer ${token()}` } : {}),
     },
     ...(body ? { body: JSON.stringify(body) } : {}),
+    ...(options.signal ? { signal: options.signal } : {}),
   });
 
   if (!res.ok) {

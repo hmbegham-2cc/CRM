@@ -5,7 +5,7 @@ import { request } from "./api";
 interface AuthCtx {
   user: AuthUser | null;
   loading: boolean;
-  login: (email: string, password: string) => Promise<void>;
+  login: (email: string, password: string, options?: { signal?: AbortSignal }) => Promise<void>;
   logout: () => void;
 }
 
@@ -30,8 +30,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const value = useMemo<AuthCtx>(() => ({
     user,
     loading,
-    async login(email, password) {
-      const res = await request<LoginResponse>("/auth/login", "POST", { email, password });
+    async login(email, password, options) {
+      const res = await request<LoginResponse>("/auth/login", "POST", { email, password }, false, options);
       localStorage.setItem("crc_token", res.token);
       setUser(res.user);
     },
