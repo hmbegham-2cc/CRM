@@ -12,6 +12,8 @@
     "db:seed": "pnpm --filter @crc/db db:seed"
   },
   "dependencies": {
-    "pg": "^8.20.0"
+    "@prisma/client": "^6.16.0",
+    "pg": "^8.20.0",
+    "prisma": "^6.16.0"
   }
 }
