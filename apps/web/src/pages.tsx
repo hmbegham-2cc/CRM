@@ -1882,9 +1882,19 @@ export function LoginPage() {
               setLoading(true);
               setError("");
               try {
+                // Add timeout for API call
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 10000);
+                
                 await login(email, password);
-              } catch {
-                setError("Email ou mot de passe incorrect");
+                clearTimeout(timeoutId);
+              } catch (err: any) {
+                console.error('Login error:', err);
+                if (err.name === 'AbortError') {
+                  setError("Le serveur ne répond pas. Veuillez réessayer.");
+                } else {
+                  setError(err.message || "Email ou mot de passe incorrect");
+                }
               } finally {
                 setLoading(false);
               }
