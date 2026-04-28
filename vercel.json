@@ -1,14 +1,13 @@
 {
   "buildCommand": "pnpm install && pnpm --filter @crc/db db:generate && pnpm --filter @crc/web build",
   "outputDirectory": "apps/web/dist",
-  "rewrites": [
+  "routes": [
     {
-      "source": "/api/v1/:path*",
-      "destination": "/api/v1/:path*"
+      "handle": "filesystem"
     },
     {
-      "source": "/((?!api/).*)",
-      "destination": "/index.html"
+      "src": "/(.*)",
+      "dest": "/index.html"
     }
   ]
 }

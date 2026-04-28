@@ -50,29 +50,61 @@ pnpm dev
 
 ---
 
-## Déploiement sur Vercel
+## Déploiement
 
-### 1. Prérequis
+### Architecture de déploiement
 
-- Compte Supabase avec base de données PostgreSQL
-- Compte Brevo pour l'envoi d'emails
-- Repo sur GitHub
+- **Frontend** → Vercel (gratuit)
+- **API** → Render (gratuit)
+- **Database** → Supabase (gratuit)
 
-### 2. Variables d'environnement (Vercel)
+### 1. Déployer l'API sur Render
 
-| Variable | Description |
-|----------|-------------|
-| `DATABASE_URL` | URL de connexion Supabase (pooler recommandé) |
-| `JWT_SECRET` | Secret pour les tokens JWT (long et aléatoire) |
-| `BREVO_API_KEY` | Clé API Brevo pour les emails |
-| `FRONTEND_URL` | URL du frontend (ex: `https://crm.vercel.app`) |
-| `CORS_ORIGIN` | URL du frontend pour CORS |
+1. Aller sur https://render.com et créer un compte
+2. Cliquer sur **New +** → **Web Service**
+3. Connecter ton repo GitHub `hmbegham-2cc/CRM`
+4. Configurer:
 
-### 3. Déployer
+| Champ | Valeur |
+|-------|--------|
+| **Name** | `crc-api` |
+| **Region** | Frankfurt (ou le plus proche) |
+| **Branch** | master |
+| **Root Directory** | `apps/api` |
+| **Build Command** | `pnpm install && pnpm --filter @crc/db db:generate && pnpm build` |
+| **Start Command** | `pnpm start` |
+| **Plan** | Free |
 
-1. Importer le repo sur Vercel
-2. Configurer les variables d'environnement
-3. Déployer
+5. Ajouter les variables d'environnement:
+
+| Variable | Valeur |
+|----------|--------|
+| `DATABASE_URL` | `postgresql://postgres.mssihzqvxdndovvohqch:rUaCylwq3Ags0F3N@aws-0-eu-central-1.pooler.supabase.com:6543/postgres` |
+| `JWT_SECRET` | (générer une chaîne aléatoire longue) |
+| `BREVO_API_KEY` | `xkeysib-ta-cle-api-brevo-ici` |
+| `FRONTEND_URL` | `https://ton-app.vercel.app` |
+| `CORS_ORIGIN` | `https://ton-app.vercel.app` |
+
+6. Cliquer sur **Deploy**
+
+### 2. Déployer le Frontend sur Vercel
+
+1. Aller sur https://vercel.com/new
+2. Importer le repo `hmbegham-2cc/CRM`
+3. Configurer:
+
+| Champ | Valeur |
+|-------|--------|
+| **Root Directory** | `./` (laisser vide) |
+| **Framework Preset** | Vite |
+
+4. Ajouter la variable d'environnement:
+
+| Variable | Valeur |
+|----------|--------|
+| `VITE_API_URL` | `https://crc-api.onrender.com/api/v1` |
+
+5. Cliquer sur **Deploy**
 
 ---
 
