@@ -1,8 +1,5 @@
-// Vercel serverless entry point
-// This imports the built Express app from apps/api/dist/server.js
-
-import app from '../apps/api/dist/server.js';
-
-export default function handler(req, res) {
+// Vercel serverless entry point - uses dynamic import for ESM
+export default async function handler(req, res) {
+  const app = (await import('../apps/api/dist/server.js')).default;
   return app(req, res);
 }
