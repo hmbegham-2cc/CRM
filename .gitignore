@@ -1,0 +1,14 @@
+node_modules
+.pnpm-store
+dist
+build
+.turbo
+.env
+.env.local
+coverage
+*.log
+apps/web/node_modules
+apps/api/node_modules
+packages/db/node_modules
+packages/types/node_modules
+packages/config/node_modules

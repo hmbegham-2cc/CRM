@@ -1,0 +1,17 @@
+{
+  "name": "crc-platform",
+  "private": true,
+  "version": "1.0.0",
+  "packageManager": "pnpm@10.18.1",
+  "scripts": {
+    "dev": "pnpm -r --parallel dev",
+    "build": "pnpm -r build",
+    "lint": "pnpm -r lint",
+    "db:generate": "pnpm --filter @crc/db db:generate",
+    "db:migrate": "pnpm --filter @crc/db db:migrate",
+    "db:seed": "pnpm --filter @crc/db db:seed"
+  },
+  "dependencies": {
+    "pg": "^8.20.0"
+  }
+}

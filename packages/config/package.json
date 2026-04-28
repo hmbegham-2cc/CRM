@@ -1,0 +1,11 @@
+{
+  "name": "@crc/config",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "main": "eslint.base.cjs",
+  "scripts": {
+    "build": "echo \"No build for @crc/config\"",
+    "lint": "echo \"No lint for @crc/config\""
+  }
+}
