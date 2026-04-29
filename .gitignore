@@ -16,6 +16,9 @@ packages/config/node_modules
 .vscode/
 .idea/
 
+# Temp commit messages
+.commit-msg.tmp
+
 # Supabase CLI scratch files
 supabase/.temp/
 supabase/.branches/
