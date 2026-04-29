@@ -20,6 +20,12 @@ export function useAsync(): [boolean, <T>(fn: () => Promise<T>) => Promise<T | u
   const inFlight = useRef(false);
   const mounted = useRef(true);
 
+  useEffect(() => {
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+
   // We don't use useEffect here on purpose — we want minimal overhead.
   // The mounted ref is reset on each render of a fresh hook instance, and
   // React StrictMode double-mount is fine because the state is local.

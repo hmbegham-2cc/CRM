@@ -26,7 +26,7 @@ serve(async (req) => {
     const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
     const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const BREVO_API_KEY = Deno.env.get("BREVO_API_KEY");
-    const FRONTEND_URL = Deno.env.get("FRONTEND_URL") ?? new URL(req.url).origin;
+    const FRONTEND_URL = Deno.env.get("FRONTEND_URL") ?? "https://crm-api-rose.vercel.app";
 
     const supabase = createClient(SUPABASE_URL, SERVICE_ROLE);
 

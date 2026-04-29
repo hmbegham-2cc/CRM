@@ -1553,20 +1553,62 @@ export function SetupPasswordPage() {
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [msg, setMsg] = useState("");
+  const [sessionReady, setSessionReady] = useState(false);
   const [busy, run] = useAsync();
+
+  useEffect(() => {
+    // We listen for the first valid session
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      console.log("[SetupPassword] Auth event:", event, !!session);
+      if (session) {
+        setMsg("");
+        setSessionReady(true);
+      }
+    });
+
+    // Check immediately too
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (!session) {
+        setMsg("Attente de la session... Si ce message persiste, le lien est invalide.");
+        setSessionReady(false);
+      } else {
+        setMsg("");
+        setSessionReady(true);
+      }
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    if (!sessionReady) {
+      return setMsg("Erreur : session non prête. Veuillez attendre ou actualiser.");
+    }
     setMsg("");
     if (password.length < 8) return setMsg("Erreur : 8 caractères minimum");
     if (password !== confirm) return setMsg("Erreur : les mots de passe ne correspondent pas");
     run(async () => {
       try {
-        await setupPassword(password);
+        console.log("[SetupPassword] Updating user password...");
+        
+        // Wrap the update in a timeout to avoid hanging forever
+        const updatePromise = supabase.auth.updateUser({ password: password });
+        const timeoutPromise = new Promise((_, reject) => 
+          setTimeout(() => reject(new Error("Délai d'attente dépassé. Veuillez réessayer.")), 15000)
+        );
+
+        const { error } = await Promise.race([updatePromise, timeoutPromise]) as any;
+        if (error) throw error;
+
+        console.log("[SetupPassword] Success!");
         setMsg("Succès ! Redirection...");
         toast.success("Mot de passe configuré");
-        setTimeout(() => navigate("/"), 1200);
+        
+        // Give time for AuthProvider to receive the USER_UPDATED event
+        setTimeout(() => navigate("/"), 1500);
       } catch (err: any) {
+        console.error("[SetupPassword] Error:", err);
         setMsg("Erreur : " + (err.message || "Lien expiré ou invalide"));
       }
     });
@@ -1586,7 +1628,7 @@ export function SetupPasswordPage() {
             <label className="label">Confirmer le mot de passe</label>
             <input className="input" type="password" value={confirm} onChange={e => setConfirm(e.target.value)} required />
           </div>
-          <button type="submit" className="btn btn-primary" disabled={busy}>
+          <button type="submit" className="btn btn-primary" disabled={busy || !sessionReady}>
             {busy ? "Enregistrement..." : "Enregistrer et continuer"}
           </button>
           {msg && <p className="muted" style={{ color: msg.includes("Erreur") ? "var(--danger)" : "var(--success)" }}>{msg}</p>}

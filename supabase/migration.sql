@@ -11,12 +11,17 @@ CREATE EXTENSION IF NOT EXISTS pgcrypto;
 -- 1. Schema migration: drop legacy auth columns, switch IDs to UUID
 -- ============================================================
 
+-- Add `active` column to Campaign table
+ALTER TABLE public."Campaign" ADD COLUMN IF NOT EXISTS "active" BOOLEAN NOT NULL DEFAULT TRUE;
+
 -- Drop password / setupToken (Supabase Auth replaces them)
 ALTER TABLE public."User" DROP COLUMN IF EXISTS "password";
 ALTER TABLE public."User" DROP COLUMN IF EXISTS "setupToken";
 
--- Add `active` boolean: lets admins disable accounts without losing history.
+-- Add `active` boolean and `createdAt` timestamp.
 ALTER TABLE public."User" ADD COLUMN IF NOT EXISTS "active" BOOLEAN NOT NULL DEFAULT TRUE;
+ALTER TABLE public."User" ADD COLUMN IF NOT EXISTS "createdAt" TIMESTAMPTZ NOT NULL DEFAULT NOW();
+ALTER TABLE public."User" ADD COLUMN IF NOT EXISTS "updatedAt" TIMESTAMPTZ NOT NULL DEFAULT NOW();
 
 -- Remove the legacy seed admin (by email so it works at any state)
 DELETE FROM public."User" WHERE email = 'admin@2cconseil.com';
@@ -298,12 +303,13 @@ SECURITY DEFINER
 SET search_path = public, pg_temp
 AS $$
 BEGIN
-  INSERT INTO public."User" (id, email, name, role, "updatedAt")
+  INSERT INTO public."User" (id, email, name, role, "createdAt", "updatedAt")
   VALUES (
     NEW.id,
     NEW.email,
     COALESCE(NEW.raw_user_meta_data->>'name', split_part(NEW.email, '@', 1)),
     COALESCE((NEW.raw_user_meta_data->>'role')::public."Role", 'TELECONSEILLER'),
+    now(),
     now()
   )
   ON CONFLICT (id) DO NOTHING;
