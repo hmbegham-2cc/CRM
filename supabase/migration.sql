@@ -18,7 +18,8 @@ ALTER TABLE public."User" DROP COLUMN IF EXISTS "setupToken";
 -- Remove the legacy seed admin (by email so it works at any state)
 DELETE FROM public."User" WHERE email = 'admin@2cconseil.com';
 
--- Switch User.id from TEXT to UUID (idempotent)
+-- Switch User.id and dependent FKs from TEXT to UUID (idempotent, transactional)
+-- Order matters: drop FKs → convert all columns → recreate FKs.
 DO $$
 DECLARE v_type text;
 BEGIN
@@ -27,39 +28,44 @@ BEGIN
   WHERE table_schema = 'public' AND table_name = 'User' AND column_name = 'id';
 
   IF v_type = 'text' THEN
+    -- 1. Drop FK constraints depending on User.id
+    ALTER TABLE public."CampaignMember" DROP CONSTRAINT IF EXISTS "CampaignMember_userId_fkey";
+    ALTER TABLE public."DailyReport"    DROP CONSTRAINT IF EXISTS "DailyReport_userId_fkey";
+    ALTER TABLE public."DailyReport"    DROP CONSTRAINT IF EXISTS "DailyReport_validatedById_fkey";
+    ALTER TABLE public."Notification"   DROP CONSTRAINT IF EXISTS "Notification_userId_fkey";
+
+    -- 2. Convert primary key column
     ALTER TABLE public."User" ALTER COLUMN id DROP DEFAULT;
     ALTER TABLE public."User" ALTER COLUMN id TYPE uuid USING id::uuid;
     ALTER TABLE public."User" ALTER COLUMN id SET DEFAULT gen_random_uuid();
-  END IF;
-END $$;
 
--- Switch related FKs from TEXT to UUID (idempotent, one DO block per column)
-DO $$
-DECLARE v_type text;
-BEGIN
-  SELECT data_type INTO v_type FROM information_schema.columns
-  WHERE table_schema='public' AND table_name='CampaignMember' AND column_name='userId';
-  IF v_type = 'text' THEN
+    -- 3. Convert dependent FK columns
     ALTER TABLE public."CampaignMember" ALTER COLUMN "userId" TYPE uuid USING "userId"::uuid;
-  END IF;
-
-  SELECT data_type INTO v_type FROM information_schema.columns
-  WHERE table_schema='public' AND table_name='DailyReport' AND column_name='userId';
-  IF v_type = 'text' THEN
-    ALTER TABLE public."DailyReport" ALTER COLUMN "userId" TYPE uuid USING "userId"::uuid;
-  END IF;
-
-  SELECT data_type INTO v_type FROM information_schema.columns
-  WHERE table_schema='public' AND table_name='DailyReport' AND column_name='validatedById';
-  IF v_type = 'text' THEN
-    ALTER TABLE public."DailyReport" ALTER COLUMN "validatedById" TYPE uuid
+    ALTER TABLE public."DailyReport"    ALTER COLUMN "userId" TYPE uuid USING "userId"::uuid;
+    ALTER TABLE public."DailyReport"    ALTER COLUMN "validatedById" TYPE uuid
       USING CASE WHEN "validatedById" IS NOT NULL THEN "validatedById"::uuid END;
-  END IF;
+    ALTER TABLE public."Notification"   ALTER COLUMN "userId" TYPE uuid USING "userId"::uuid;
 
-  SELECT data_type INTO v_type FROM information_schema.columns
-  WHERE table_schema='public' AND table_name='Notification' AND column_name='userId';
-  IF v_type = 'text' THEN
-    ALTER TABLE public."Notification" ALTER COLUMN "userId" TYPE uuid USING "userId"::uuid;
+    -- 4. Recreate FK constraints (matches Prisma schema cascade rules)
+    ALTER TABLE public."CampaignMember"
+      ADD CONSTRAINT "CampaignMember_userId_fkey"
+      FOREIGN KEY ("userId") REFERENCES public."User"(id)
+      ON DELETE CASCADE ON UPDATE CASCADE;
+
+    ALTER TABLE public."DailyReport"
+      ADD CONSTRAINT "DailyReport_userId_fkey"
+      FOREIGN KEY ("userId") REFERENCES public."User"(id)
+      ON DELETE CASCADE ON UPDATE CASCADE;
+
+    ALTER TABLE public."DailyReport"
+      ADD CONSTRAINT "DailyReport_validatedById_fkey"
+      FOREIGN KEY ("validatedById") REFERENCES public."User"(id)
+      ON DELETE SET NULL ON UPDATE CASCADE;
+
+    ALTER TABLE public."Notification"
+      ADD CONSTRAINT "Notification_userId_fkey"
+      FOREIGN KEY ("userId") REFERENCES public."User"(id)
+      ON DELETE CASCADE ON UPDATE CASCADE;
   END IF;
 END $$;
 
