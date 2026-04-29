@@ -8,8 +8,14 @@ build
 coverage
 *.log
 apps/web/node_modules
-apps/api/node_modules
-packages/db/node_modules
 packages/types/node_modules
 packages/config/node_modules
-api/_server.cjs
+
+# IDE / editor
+*.code-workspace
+.vscode/
+.idea/
+
+# Supabase CLI scratch files
+supabase/.temp/
+supabase/.branches/

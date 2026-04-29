@@ -17,11 +17,14 @@ serve(async (req) => {
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
-    // Build query for reports
-    let query = `select=date,campaign:Campaign(name),user:User(name,email),incomingTotal,outgoingTotal,handled,missed,rdvTotal,smsTotal,status`;
-    let filter = `campaignId=eq.${campaignId}`;
-    if (dateFrom) filter += `&date=gte.${dateFrom}`;
-    if (dateTo) filter += `&date=lte.${dateTo}`;
+    // Build query for reports.
+    // DailyReport has 2 FKs to User (userId, validatedById) → disambiguate user:User!userId(...)
+    let query =
+      `select=date,campaign:Campaign(name),user:User!userId(name,email),` +
+      `incomingTotal,outgoingTotal,handled,missed,rdvTotal,smsTotal,status`;
+    let filter = `campaignId=eq.${encodeURIComponent(campaignId)}`;
+    if (dateFrom) filter += `&date=gte.${encodeURIComponent(dateFrom)}`;
+    if (dateTo) filter += `&date=lte.${encodeURIComponent(dateTo)}`;
     filter += `&order=date.asc`;
 
     const res = await fetch(
@@ -34,21 +37,41 @@ serve(async (req) => {
         },
       }
     );
+    if (!res.ok) {
+      const body = await res.text();
+      throw new Error(`PostgREST error ${res.status}: ${body}`);
+    }
     const reports = await res.json();
 
-    // Generate Excel using simple CSV-like format (XLSX is complex in Deno)
-    // We'll generate a proper Excel file using a minimal approach
-    const BREVO_API_KEY = Deno.env.get("BREVO_API_KEY");
+    // Build CSV (Excel-friendly, ; separator + UTF-8 BOM for proper encoding in Excel-FR)
+    const escape = (v: unknown) => {
+      const s = String(v ?? "");
+      // Escape quotes and wrap if contains separator/quote/newline
+      if (s.includes('"') || s.includes(";") || s.includes("\n")) {
+        return `"${s.replace(/"/g, '""')}"`;
+      }
+      return s;
+    };
 
-    // Build CSV content as fallback (Excel can open it)
-    let csv = "Date;Conseiller;Reçus;Émis;Traités;Manqués;RDV;SMS;Statut\n";
+    let csv = "\uFEFF"; // BOM for Excel UTF-8 detection
+    csv += "Date;Conseiller;Reçus;Émis;Traités;Manqués;RDV;SMS;Statut\n";
     for (const r of reports) {
       const date = new Date(r.date).toLocaleDateString("fr-FR");
       const name = r.user?.name || r.user?.email || "";
-      csv += `${date};${name};${r.incomingTotal};${r.outgoingTotal};${r.handled};${r.missed};${r.rdvTotal};${r.smsTotal};${r.status}\n`;
+      csv +=
+        [
+          escape(date),
+          escape(name),
+          r.incomingTotal,
+          r.outgoingTotal,
+          r.handled,
+          r.missed,
+          r.rdvTotal,
+          r.smsTotal,
+          r.status,
+        ].join(";") + "\n";
     }
 
-    // Return as CSV with Excel-friendly headers
     return new Response(csv, {
       headers: {
         ...corsHeaders,

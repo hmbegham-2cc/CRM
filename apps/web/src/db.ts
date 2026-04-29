@@ -1,14 +1,28 @@
 import { supabase } from "./supabase";
 import type { Campaign, DailyReport, Role } from "@crc/types";
 
+// ── Helpers ────────────────────────────────────────────────
+
+function fail(error: { message?: string } | null | undefined, fallback: string): never {
+  throw new Error(error?.message || fallback);
+}
+
+async function requireUser() {
+  const { data: { user }, error } = await supabase.auth.getUser();
+  if (error || !user) throw new Error("Non authentifié");
+  return user;
+}
+
 // ── Campaigns ──────────────────────────────────────────────
 
 export async function getCampaigns(): Promise<Campaign[]> {
+  // Single FK Campaign↔CampaignMember (campaignId): no need to disambiguate.
+  // We fetch all members then filter active ones (endDate IS NULL) client-side.
   const { data, error } = await supabase
     .from("Campaign")
-    .select(`*, members:CampaignMember!endDate(endDate, user:User(id, name, email))`)
+    .select(`*, members:CampaignMember(id, endDate, user:User(id, name, email))`)
     .order("name");
-  if (error) throw new Error(error.message);
+  if (error) fail(error, "Impossible de charger les campagnes");
   return (data || []).map((c: any) => ({
     ...c,
     members: (c.members || []).filter((m: any) => !m.endDate),
@@ -21,7 +35,7 @@ export async function createCampaign(name: string) {
     .insert({ name: name.trim(), active: true })
     .select()
     .single();
-  if (error) throw new Error(error.message);
+  if (error) fail(error, "Impossible de créer la campagne");
   return data;
 }
 
@@ -32,13 +46,13 @@ export async function updateCampaign(id: string, updates: { name?: string; activ
     .eq("id", id)
     .select()
     .single();
-  if (error) throw new Error(error.message);
+  if (error) fail(error, "Impossible de mettre à jour la campagne");
   return data;
 }
 
 export async function deleteCampaign(id: string) {
   const { error } = await supabase.from("Campaign").delete().eq("id", id);
-  if (error) throw new Error(error.message);
+  if (error) fail(error, "Impossible de supprimer la campagne");
 }
 
 // ── Teams ──────────────────────────────────────────────────
@@ -48,7 +62,8 @@ export async function assignTeam(campaignId: string, userIds: string[]) {
     p_campaign_id: campaignId,
     p_user_ids: userIds,
   });
-  if (error) throw new Error(error.message);
+  if (error) fail(error, "Impossible d'assigner l'équipe");
+  if (data?.error) throw new Error(data.error);
   return data;
 }
 
@@ -66,9 +81,12 @@ type UserRow = {
 export async function getUsers(): Promise<UserRow[]> {
   const { data, error } = await supabase
     .from("User")
-    .select(`id, name, email, role, createdAt, campaignMemberships:CampaignMember!endDate(endDate, campaign:Campaign(name))`)
+    .select(
+      `id, name, email, role, "createdAt",
+       campaignMemberships:CampaignMember(id, "endDate", campaign:Campaign(name))`,
+    )
     .order("name");
-  if (error) throw new Error(error.message);
+  if (error) fail(error, "Impossible de charger les utilisateurs");
   return (data || []).map((u: any) => ({
     ...u,
     campaignMemberships: (u.campaignMemberships || []).filter((m: any) => !m.endDate),
@@ -79,7 +97,7 @@ export async function updateUserRole(userId: string, role: Role) {
   const { data, error } = await supabase.functions.invoke("update-role", {
     body: { userId, role },
   });
-  if (error) throw new Error(error.message);
+  if (error) fail(error, "Impossible de mettre à jour le rôle");
   if (data?.error) throw new Error(data.error);
   return data;
 }
@@ -95,9 +113,16 @@ type ReportFilters = {
 };
 
 export async function getReports(filters: ReportFilters = {}): Promise<DailyReport[]> {
+  // DailyReport has TWO FKs to User (userId and validatedById):
+  // disambiguate by FK column name (PostgREST embedded resource hint).
   let query = supabase
     .from("DailyReport")
-    .select(`*, user:User(id, name, email), campaign:Campaign(id, name), validatedBy:ValidatedBy(id, name)`)
+    .select(
+      `*,
+       user:User!userId(id, name, email),
+       campaign:Campaign(id, name),
+       validatedBy:User!validatedById(id, name)`,
+    )
     .order("date", { ascending: false });
 
   if (filters.campaignId) query = query.eq("campaignId", filters.campaignId);
@@ -107,13 +132,8 @@ export async function getReports(filters: ReportFilters = {}): Promise<DailyRepo
   if (filters.dateTo) query = query.lte("date", filters.dateTo);
 
   const { data, error } = await query;
-  if (error) throw new Error(error.message);
-  return (data || []).map((r: any) => ({
-    ...r,
-    date: r.date,
-    submittedAt: r.submittedAt ?? null,
-    validatedAt: r.validatedAt ?? null,
-  }));
+  if (error) fail(error, "Impossible de charger les rapports");
+  return (data || []) as DailyReport[];
 }
 
 export async function upsertReport(reportData: {
@@ -127,36 +147,33 @@ export async function upsertReport(reportData: {
   smsTotal: number;
   observations?: string;
 }): Promise<{ id: string }> {
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) throw new Error("Non authentifié");
+  const user = await requireUser();
 
   const { data, error } = await supabase
     .from("DailyReport")
     .upsert(
       {
         ...reportData,
-        date: reportData.date,
         userId: user.id,
         status: "DRAFT",
       },
-      { onConflict: "date,campaignId,userId" }
+      { onConflict: "date,campaignId,userId" },
     )
     .select("id")
     .single();
-  if (error) throw new Error(error.message);
-  return data;
+  if (error) fail(error, "Impossible d'enregistrer le rapport");
+  return data!;
 }
 
 export async function submitReport(id: string) {
   const { data, error } = await supabase.rpc("submit_report", { p_report_id: id });
-  if (error) throw new Error(error.message);
+  if (error) fail(error, "Impossible de soumettre le rapport");
   if (data?.error) throw new Error(data.error);
   return data;
 }
 
 export async function actionReport(id: string, action: "validate" | "reject", reason?: string) {
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) throw new Error("Non authentifié");
+  const user = await requireUser();
 
   const { data, error } = await supabase.rpc("action_report", {
     p_report_id: id,
@@ -164,7 +181,7 @@ export async function actionReport(id: string, action: "validate" | "reject", re
     p_validator_id: user.id,
     p_reason: reason || null,
   });
-  if (error) throw new Error(error.message);
+  if (error) fail(error, action === "validate" ? "Impossible de valider" : "Impossible de rejeter");
   if (data?.error) throw new Error(data.error);
   return data;
 }
@@ -186,36 +203,34 @@ export async function getNotifications(): Promise<NotificationRow[]> {
     .select("*")
     .order("createdAt", { ascending: false })
     .limit(50);
-  if (error) throw new Error(error.message);
+  if (error) fail(error, "Impossible de charger les notifications");
   return data || [];
 }
 
 export async function markNotificationRead(id: string) {
   const { error } = await supabase.from("Notification").update({ read: true }).eq("id", id);
-  if (error) throw new Error(error.message);
+  if (error) fail(error, "Impossible de marquer comme lue");
 }
 
 export async function markAllNotificationsRead() {
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) throw new Error("Non authentifié");
+  const user = await requireUser();
   const { error } = await supabase
     .from("Notification")
     .update({ read: true })
     .eq("userId", user.id)
     .eq("read", false);
-  if (error) throw new Error(error.message);
+  if (error) fail(error, "Impossible de tout marquer comme lu");
 }
 
 export async function deleteNotification(id: string) {
   const { error } = await supabase.from("Notification").delete().eq("id", id);
-  if (error) throw new Error(error.message);
+  if (error) fail(error, "Impossible de supprimer la notification");
 }
 
 export async function deleteAllNotifications() {
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) throw new Error("Non authentifié");
+  const user = await requireUser();
   const { error } = await supabase.from("Notification").delete().eq("userId", user.id);
-  if (error) throw new Error(error.message);
+  if (error) fail(error, "Impossible de tout supprimer");
 }
 
 // ── Auth operations ────────────────────────────────────────
@@ -224,7 +239,7 @@ export async function inviteUser(email: string, name: string, role: Role) {
   const { data, error } = await supabase.functions.invoke("invite-user", {
     body: { email, name, role },
   });
-  if (error) throw new Error(error.message);
+  if (error) fail(error, "Impossible d'inviter l'utilisateur");
   if (data?.error) throw new Error(data.error);
   return data;
 }
@@ -233,11 +248,12 @@ export async function forgotPassword(email: string) {
   const { error } = await supabase.auth.resetPasswordForEmail(email, {
     redirectTo: `${window.location.origin}/setup-password`,
   });
-  if (error) throw new Error(error.message);
+  if (error) fail(error, "Impossible d'envoyer le lien de réinitialisation");
 }
 
 export async function changePassword(currentPassword: string, newPassword: string) {
-  // Re-authenticate first to verify current password
+  // Note: signInWithPassword refreshes the session but does NOT log out.
+  // We use it to verify the current password without disrupting the session.
   const { data: { user } } = await supabase.auth.getUser();
   if (!user?.email) throw new Error("Non authentifié");
 
@@ -248,30 +264,43 @@ export async function changePassword(currentPassword: string, newPassword: strin
   if (signInError) throw new Error("Mot de passe actuel incorrect");
 
   const { error } = await supabase.auth.updateUser({ password: newPassword });
-  if (error) throw new Error(error.message);
+  if (error) fail(error, "Impossible de modifier le mot de passe");
 }
 
 export async function setupPassword(newPassword: string) {
   const { error } = await supabase.auth.updateUser({ password: newPassword });
-  if (error) throw new Error(error.message);
+  if (error) fail(error, "Impossible de configurer le mot de passe");
 }
 
-// ── Export ──────────────────────────────────────────────────
+// ── Export ─────────────────────────────────────────────────
 
-export async function exportReports(campaignId: string, dateFrom?: string, dateTo?: string): Promise<Blob> {
+export async function exportReports(
+  campaignId: string,
+  dateFrom?: string,
+  dateTo?: string,
+): Promise<Blob> {
+  // The export-reports Edge Function returns text/csv (not JSON).
+  // Supabase JS v2 returns a Blob for non-JSON content-types when invoked via .invoke().
+  // We normalize to a Blob regardless to keep callers simple.
   const { data, error } = await supabase.functions.invoke("export-reports", {
     body: { campaignId, dateFrom, dateTo },
   });
-  if (error) throw new Error(error.message);
-  return data;
+  if (error) fail(error, "Impossible d'exporter les rapports");
+
+  if (data instanceof Blob) return data;
+  if (typeof data === "string") {
+    return new Blob([data], { type: "text/csv;charset=utf-8" });
+  }
+  // Fallback: shouldn't happen but be safe (some SDK versions return ArrayBuffer)
+  return new Blob([data as BlobPart], { type: "text/csv;charset=utf-8" });
 }
 
-// ── Cron (admin) ────────────────────────────────────────────
+// ── Cron (admin) ───────────────────────────────────────────
 
 export async function checkMissingReports(date?: string) {
   const { data, error } = await supabase.rpc("check_missing_reports", {
     p_date: date || null,
   });
-  if (error) throw new Error(error.message);
+  if (error) fail(error, "Impossible de vérifier les rapports manquants");
   return data;
 }

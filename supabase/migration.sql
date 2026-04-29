@@ -85,13 +85,45 @@ $$;
 GRANT EXECUTE ON FUNCTION public.current_user_role() TO authenticated;
 
 -- ============================================================
--- 3. Enable RLS on all tables
+-- 3. FK public."User".id → auth.users.id ON DELETE CASCADE
+-- Ensures public.User stays in sync when an auth user is deleted.
+-- ============================================================
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'User_id_fkey' AND conrelid = 'public."User"'::regclass
+  ) THEN
+    ALTER TABLE public."User"
+      ADD CONSTRAINT "User_id_fkey"
+      FOREIGN KEY (id) REFERENCES auth.users(id) ON DELETE CASCADE;
+  END IF;
+END $$;
+
+-- ============================================================
+-- 4. Enable RLS on all tables
 -- ============================================================
 ALTER TABLE public."User"           ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public."Campaign"       ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public."CampaignMember" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public."DailyReport"    ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public."Notification"   ENABLE ROW LEVEL SECURITY;
+
+-- ============================================================
+-- 4b. Grant permissions and policy for supabase_auth_admin
+-- GoTrue (Supabase Auth) reads public.User during login flows.
+-- Without these grants/policies, login fails with
+-- "Database error querying schema" (HTTP 500).
+-- ============================================================
+GRANT USAGE ON SCHEMA public        TO supabase_auth_admin;
+GRANT USAGE ON TYPE  public."Role"  TO supabase_auth_admin;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public."User" TO supabase_auth_admin;
+
+DROP POLICY IF EXISTS "Auth admin full access on users" ON public."User";
+CREATE POLICY "Auth admin full access on users"
+  ON public."User" FOR ALL
+  TO supabase_auth_admin
+  USING (true) WITH CHECK (true);
 
 -- ============================================================
 -- 4. RLS Policies — User

@@ -6,14 +6,6 @@
   "scripts": {
     "dev": "pnpm -r --parallel dev",
     "build": "pnpm -r build",
-    "lint": "pnpm -r lint",
-    "db:generate": "pnpm --filter @crc/db db:generate",
-    "db:migrate": "pnpm --filter @crc/db db:migrate",
-    "db:seed": "pnpm --filter @crc/db db:seed"
-  },
-  "dependencies": {
-    "@prisma/client": "^6.16.0",
-    "pg": "^8.20.0",
-    "prisma": "^6.16.0"
+    "lint": "pnpm -r lint"
   }
 }
