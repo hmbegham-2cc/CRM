@@ -1,7 +1,7 @@
 import { Link, Outlet, useLocation } from "react-router-dom";
 import { useState, useEffect } from "react";
 import { useAuth } from "./auth";
-import { request } from "./api";
+import { supabase } from "./supabase";
 import { 
   LayoutDashboard, 
   FileEdit, 
@@ -40,8 +40,8 @@ export function AppLayout() {
   useEffect(() => {
     const checkUnread = async () => {
       try {
-        const notifications = await request<{ id: string; read: boolean }[]>('/notifications');
-        setHasUnread(notifications.some(n => !n.read));
+        const { data } = await supabase.from("Notification").select("id, read").eq("read", false).limit(1);
+        setHasUnread((data || []).length > 0);
       } catch {
         setHasUnread(false);
       }

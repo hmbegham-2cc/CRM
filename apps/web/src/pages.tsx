@@ -1,7 +1,13 @@
 import { useEffect, useMemo, useState, useRef } from "react";
 import { Navigate, useNavigate, useSearchParams } from "react-router-dom";
 import type { Campaign, DailyReport } from "@crc/types";
-import { request } from "./api";
+import {
+  getCampaigns, createCampaign, updateCampaign, deleteCampaign,
+  assignTeam, getUsers, updateUserRole, getReports, upsertReport,
+  submitReport, actionReport, getNotifications, markNotificationRead,
+  markAllNotificationsRead, deleteNotification, deleteAllNotifications,
+  inviteUser, forgotPassword, changePassword, setupPassword, exportReports,
+} from "./db";
 import { useAuth } from "./auth";
 import { toast } from "sonner";
 import jsPDF from "jspdf";
@@ -106,9 +112,7 @@ export function RapportPage() {
   const [reportId, setReportId] = useState<string | null>(null);
 
   useEffect(() => {
-    request<Campaign[]>("/campaigns").then((all) => {
-      // Même si SUPERVISEUR voit toutes les campagnes, la saisie doit rester limitée
-      // aux campagnes où il est membre actif.
+    getCampaigns().then((all) => {
       if (user?.role === "SUPERVISEUR") {
         setCampaigns(all.filter((c: any) => (c.members || []).some((m: any) => m.user?.id === user.id)));
       } else {
@@ -120,10 +124,10 @@ export function RapportPage() {
   async function save(submit = false) {
     setMessage("");
     try {
-      const report = await request<{ id: string }>("/reports", "POST", { date, campaignId, ...state });
+      const report = await upsertReport({ date, campaignId, ...state });
       setReportId(report.id);
       if (submit) {
-        await request(`/reports/${report.id}`, "PATCH", { action: "submit" });
+        await submitReport(report.id);
         toast.success("Rapport soumis avec succès !");
       } else {
         toast.info("Brouillon enregistré.");
@@ -278,8 +282,7 @@ export function MesSaisiesPage() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => { 
-    const qp = new URLSearchParams({ ...(user?.id ? { userId: user.id } : {}) });
-    request<DailyReport[]>(`/reports?${qp.toString()}`)
+    getReports({ userId: user?.id })
       .then(setReports)
       .finally(() => setLoading(false)); 
   }, [user?.id]);
@@ -315,17 +318,16 @@ export function ValidationPage() {
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [loading, setLoading] = useState(false);
 
-  useEffect(() => { request<Campaign[]>("/campaigns").then(setCampaigns); }, []);
+  useEffect(() => { getCampaigns().then(setCampaigns); }, []);
   
   useEffect(() => {
     setLoading(true);
-    const qp = new URLSearchParams({ 
+    getReports({ 
       status: "SUBMITTED", 
       ...(campaignId ? { campaignId } : {}),
       ...(dateFrom ? { dateFrom } : {}),
       ...(dateTo ? { dateTo } : {})
-    });
-    request<DailyReport[]>(`/reports?${qp.toString()}`)
+    })
       .then(setReports)
       .finally(() => setLoading(false));
   }, [campaignId, dateFrom, dateTo]);
@@ -337,7 +339,7 @@ export function ValidationPage() {
     if (action === "reject" && rejectReasons[id]) {
       body.reason = rejectReasons[id];
     }
-    await request(`/reports/${id}`, "PATCH", body);
+    await actionReport(id, action, action === "reject" ? rejectReasons[id] : undefined);
     setReports((prev) => prev.filter((r) => r.id !== id));
     setRejectReasons((prev) => { const next = { ...prev }; delete next[id]; return next; });
   }
@@ -504,22 +506,21 @@ export function DashboardPage() {
 
   useEffect(() => {
     // On ne charge que les campagnes auxquelles l'utilisateur a accès
-    request<Campaign[]>("/campaigns").then(setCampaigns);
+    getCampaigns().then(setCampaigns);
     if (user?.role === 'ADMIN' || user?.role === 'SUPERVISEUR') {
-      request<UserRow[]>("/users").then(setUsers).catch(() => setUsers([]));
+      getUsers().then(setUsers).catch(() => setUsers([]));
     }
   }, [user]);
 
   const loadData = (cid: string, from: string, to: string, mode: 'PERSONAL' | 'TEAM') => {
     setLoading(true);
-    const qp = new URLSearchParams({ 
+    getReports({ 
       ...(cid ? { campaignId: cid } : {}),
       ...(from ? { dateFrom: from } : {}),
       ...(to ? { dateTo: to } : {}),
       ...(mode === 'PERSONAL' ? { userId: user?.id } : {}),
       ...(mode === 'TEAM' ? { status: 'VALIDATED' } : {})
-    });
-    request<DailyReport[]>(`/reports?${qp.toString()}`)
+    })
       .then(setReports)
       .finally(() => setLoading(false));
   };
@@ -846,7 +847,7 @@ export function AllReportsPage() {
   const [dateTo, setDateTo] = useState("");
 
   useEffect(() => {
-    request<Campaign[]>("/campaigns").then(setCampaigns);
+    getCampaigns().then(setCampaigns);
     load();
   }, []);
 
@@ -857,7 +858,7 @@ export function AllReportsPage() {
       ...(dateFrom ? { dateFrom } : {}),
       ...(dateTo ? { dateTo } : {})
     });
-    request<DailyReport[]>(`/reports?${qp.toString()}`)
+    getReports({ campaignId, ...(dateFrom ? { dateFrom } : {}), ...(dateTo ? { dateTo } : {}) })
       .then(setReports)
       .finally(() => setLoading(false));
   };
@@ -912,7 +913,7 @@ export function CampagnesPage() {
   
   const load = () => {
     setLoading(true);
-    request<Campaign[]>("/campaigns")
+    getCampaigns()
       .then(setCampaigns)
       .finally(() => setLoading(false));
   };
@@ -938,7 +939,7 @@ export function CampagnesPage() {
             <label className="label" htmlFor="campaign-name">Nom de la campagne</label>
             <input id="campaign-name" className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="Ex: AXA Prévoyance" />
           </div>
-          <button className="btn btn-primary" onClick={async () => { await request("/campaigns", "POST", { name }); setName(""); load(); }}>
+          <button className="btn btn-primary" onClick={async () => { await createCampaign(name); setName(""); load(); }}>
             <Plus size={18} />
             Créer
           </button>
@@ -971,7 +972,7 @@ export function CampagnesPage() {
                   onClick={async () => {
                     const nextName = prompt("Nouveau nom de campagne", c.name);
                     if (!nextName) return;
-                    await request(`/campaigns/${c.id}`, "PUT", { name: nextName });
+                    await updateCampaign(c.id, { name: nextName });
                     load();
                   }}
                 >
@@ -987,14 +988,14 @@ export function CampagnesPage() {
                 <button 
                   className="btn btn-secondary" 
                   style={{ flex: 1, fontSize: "13px" }}
-                  onClick={async () => { await request(`/campaigns/${c.id}`, "PUT", { active: !c.active }); load(); }}
+                  onClick={async () => { await updateCampaign(c.id, { active: !c.active }); load(); }}
                 >
                   {c.active ? "Désactiver" : "Activer"}
                 </button>
                 <button 
                   className="btn btn-danger" 
                   style={{ flex: 1, fontSize: "13px" }}
-                  onClick={async () => { if(confirm("Supprimer cette campagne ?")) { await request(`/campaigns/${c.id}`, "DELETE"); load(); } }}
+                  onClick={async () => { if(confirm("Supprimer cette campagne ?")) { await deleteCampaign(c.id); load(); } }}
                 >
                   Supprimer
                 </button>
@@ -1016,8 +1017,8 @@ export function EquipesPage() {
   const [searchParams] = useSearchParams();
 
   useEffect(() => { 
-    request<Campaign[]>("/campaigns").then(setCampaigns); 
-    request<UserRow[]>("/users").then(setUsers).catch(() => setUsers([])); 
+    getCampaigns().then(setCampaigns); 
+    getUsers().then(setUsers).catch(() => setUsers([])); 
   }, []);
 
   useEffect(() => {
@@ -1095,9 +1096,9 @@ export function EquipesPage() {
                           onChange={async (e) => { 
                             const tId = toast.loading("Mise à jour...");
                             try {
-                              await request("/users", "PATCH", { userId: u.id, role: e.target.value }); 
+                              await updateUserRole(u.id, e.target.value); 
                               toast.success("Rôle mis à jour", { id: tId });
-                              request<UserRow[]>("/users").then(setUsers); 
+                              getUsers().then(setUsers); 
                             } catch (err: any) {
                               toast.error("Erreur", { id: tId });
                             }
@@ -1120,7 +1121,7 @@ export function EquipesPage() {
                 onClick={async () => { 
                   setSaving(true);
                   try {
-                    await request("/teams", "POST", { campaignId, userIds: selected }); 
+                    await assignTeam(campaignId, selected); 
                     toast.success("Équipe mise à jour avec succès"); 
                   } finally {
                     setSaving(false);
@@ -1147,7 +1148,7 @@ export function UtilisateursPage() {
 
   const load = () => {
     setLoading(true);
-    request<UserRow[]>("/users")
+    getUsers()
       .then(setUsers)
       .finally(() => setLoading(false));
   };
@@ -1166,7 +1167,7 @@ export function UtilisateursPage() {
     setInviteMsg("");
     const tId = toast.loading("Envoi de l'invitation...");
     try {
-      await request("/auth/invite", "POST", inviteData);
+      await inviteUser(inviteData.email, inviteData.name, inviteData.role);
       toast.success("Utilisateur invité avec succès !", { id: tId });
       setInviteMsg("Invitation envoyée !");
       setInviteData({ email: "", name: "", role: "TELECONSEILLER" });
@@ -1248,7 +1249,7 @@ export function UtilisateursPage() {
                         onChange={async (e) => { 
                           const tId = toast.loading("Mise à jour du rôle...");
                           try {
-                            await request("/users", "PATCH", { userId: u.id, role: e.target.value }); 
+                            await updateUserRole(u.id, e.target.value); 
                             toast.success("Rôle mis à jour", { id: tId });
                             load(); 
                           } catch (err: any) {
@@ -1333,7 +1334,7 @@ export function SetupPasswordPage() {
     if (password !== confirm) return setMsg("Les mots de passe ne correspondent pas");
     setLoading(true);
     try {
-      await request("/auth/setup-password", "POST", { token, password });
+      await setupPassword(password);
       setMsg("Succès ! Redirection vers la connexion...");
       setTimeout(() => navigate("/login"), 2000);
     } catch (err: any) {
@@ -1382,7 +1383,7 @@ export function NotificationsPage() {
 
   const load = () => {
     setLoading(true);
-    request<NotificationRow[]>("/notifications")
+    getNotifications()
       .then(setNotifications)
       .finally(() => setLoading(false));
   };
@@ -1390,24 +1391,24 @@ export function NotificationsPage() {
   useEffect(() => { load(); }, []);
 
   const markAsRead = async (id: string) => {
-    await request(`/notifications/${id}/read`, "PATCH");
+    await markNotificationRead(id);
     setNotifications((prev) => prev.map(n => n.id === id ? { ...n, read: true } : n));
   };
 
   const markAllRead = async () => {
-    await request("/notifications/read-all", "PATCH");
+    await markAllNotificationsRead();
     setNotifications((prev) => prev.map(n => ({ ...n, read: true })));
     toast.success("Toutes les notifications marquées comme lues");
   };
 
-  const deleteNotification = async (id: string) => {
-    await request(`/notifications/${id}`, "DELETE");
+  const handleDeleteNotification = async (id: string) => {
+    await deleteNotification(id);
     setNotifications((prev) => prev.filter(n => n.id !== id));
     toast.success("Notification supprimée");
   };
 
   const clearAll = async () => {
-    await request("/notifications", "DELETE");
+    await deleteAllNotifications();
     setNotifications([]);
     toast.success("Toutes les notifications ont été effacées");
   };
@@ -1510,7 +1511,7 @@ export function NotificationsPage() {
                             </button>
                           )}
                           <button 
-                            onClick={() => deleteNotification(n.id)} 
+                            onClick={() => handleDeleteNotification(n.id)} 
                             className="btn-icon" 
                             title="Supprimer"
                             style={{ padding: "4px", color: "var(--danger)" }}
@@ -1550,7 +1551,7 @@ export function ForgotPasswordPage() {
     e.preventDefault();
     setLoading(true);
     try {
-      await request("/auth/forgot-password", "POST", { email });
+      await forgotPassword(email);
       setSent(true);
     } catch {
       setSent(true); // Même en cas d'erreur, on montre le même message pour ne pas révéler les emails
@@ -1612,7 +1613,7 @@ export function ChangePasswordPage() {
     setLoading(true);
     setMsg("");
     try {
-      await request("/auth/change-password", "POST", { currentPassword, newPassword });
+      await changePassword(currentPassword, newPassword);
       toast.success("Mot de passe modifié avec succès");
       navigate(-1);
     } catch (err: any) {
@@ -1656,7 +1657,7 @@ export function ExportPage() {
   const [dateFrom, setDateFrom] = useState(new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10));
   const [dateTo, setDateTo] = useState(new Date().toISOString().slice(0, 10));
 
-  useEffect(() => { request<Campaign[]>("/campaigns").then(setCampaigns); }, []);
+  useEffect(() => { getCampaigns().then(setCampaigns); }, []);
 
   async function doExport() {
     const qp = new URLSearchParams({ 
@@ -1666,7 +1667,7 @@ export function ExportPage() {
     });
     const tId = toast.loading("Génération du fichier Excel...");
     try {
-      const blob = await request<Blob>(`/export?${qp.toString()}`, "GET", undefined, true);
+      const blob = await exportReports(campaignId, dateFrom, dateTo);
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
@@ -1882,18 +1883,9 @@ export function LoginPage() {
               setLoading(true);
               setError("");
               try {
-                // Add timeout for API call
-                const controller = new AbortController();
-                const timeoutId = setTimeout(() => controller.abort(), 10000);
-                await login(email, password, { signal: controller.signal });
-                clearTimeout(timeoutId);
+                await login(email, password);
               } catch (err: any) {
-                console.error('Login error:', err);
-                if (err.name === 'AbortError') {
-                  setError("Le serveur ne répond pas. Veuillez réessayer.");
-                } else {
-                  setError(err.message || "Email ou mot de passe incorrect");
-                }
+                setError(err.message || "Email ou mot de passe incorrect");
               } finally {
                 setLoading(false);
               }
