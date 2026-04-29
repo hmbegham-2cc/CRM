@@ -1,8 +1,17 @@
 import { useEffect, useMemo, useState, useRef } from "react";
 import { Navigate, useNavigate, useSearchParams } from "react-router-dom";
 import type { Campaign, DailyReport } from "@crc/types";
-import { request } from "./api";
+import {
+  getCampaigns, createCampaign, updateCampaign, deleteCampaign,
+  assignTeam, getUsers, updateUserRole, getReports, upsertReport,
+  submitReport, actionReport, getNotifications, markNotificationRead,
+  markAllNotificationsRead, deleteNotification, deleteAllNotifications,
+  inviteUser, forgotPassword, changePassword, setupPassword, exportReports,
+  resendInvite, deleteUser, setUserActive,
+} from "./db";
 import { useAuth } from "./auth";
+import { useAsync } from "./hooks/useAsync";
+import { ConfirmModal } from "./components/ConfirmModal";
 import { toast } from "sonner";
 import jsPDF from "jspdf";
 import html2canvas from "html2canvas";
@@ -62,6 +71,7 @@ type UserRow = {
   name: string | null;
   email: string;
   role: "TELECONSEILLER" | "SUPERVISEUR" | "ADMIN";
+  active?: boolean;
   campaignMemberships: { campaign: { name: string } }[];
 };
 
@@ -78,10 +88,10 @@ type ReportFormState = {
 export function HomePage() {
   return (
     <div className="card" style={{ textAlign: "center", padding: "48px 24px" }}>
-      <div style={{ background: "rgba(37, 99, 235, 0.1)", width: "64px", height: "64px", borderRadius: "16px", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 24px" }}>
-        <LayoutDashboard size={32} color="var(--primary)" />
+      <div style={{ width: "180px", margin: "0 auto 24px" }}>
+        <img src="/logo.png" alt="2C Conseil" style={{ maxWidth: '100%', height: 'auto' }} />
       </div>
-      <h1>Bienvenue sur CRC Reporting</h1>
+      <h1>Bienvenue sur votre portail</h1>
       <p className="muted" style={{ maxWidth: "500px", margin: "0 auto" }}>
         Plateforme de reporting pour le télésecrétariat. Suivez vos indicateurs et gérez vos campagnes en temps réel.
       </p>
@@ -106,9 +116,7 @@ export function RapportPage() {
   const [reportId, setReportId] = useState<string | null>(null);
 
   useEffect(() => {
-    request<Campaign[]>("/campaigns").then((all) => {
-      // Même si SUPERVISEUR voit toutes les campagnes, la saisie doit rester limitée
-      // aux campagnes où il est membre actif.
+    getCampaigns().then((all) => {
       if (user?.role === "SUPERVISEUR") {
         setCampaigns(all.filter((c: any) => (c.members || []).some((m: any) => m.user?.id === user.id)));
       } else {
@@ -117,23 +125,43 @@ export function RapportPage() {
     });
   }, [user]);
 
+  const [busy, run] = useAsync();
+
   async function save(submit = false) {
     setMessage("");
-    try {
-      const report = await request<{ id: string }>("/reports", "POST", { date, campaignId, ...state });
-      setReportId(report.id);
-      if (submit) {
-        await request(`/reports/${report.id}`, "PATCH", { action: "submit" });
-        toast.success("Rapport soumis avec succès !");
-      } else {
-        toast.info("Brouillon enregistré.");
-      }
-      setMessage(submit ? "Rapport soumis avec succès." : "Brouillon enregistré.");
-    } catch (err: any) {
-      const errorMsg = err.message || "Impossible d'enregistrer le rapport";
-      toast.error(errorMsg);
-      setMessage("Erreur : " + errorMsg);
+    // Client-side validation: server validates again in submit_report RPC
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const reportDate = new Date(date);
+    if (reportDate > today) {
+      const msg = "La date du rapport ne peut pas être dans le futur";
+      toast.error(msg); setMessage("Erreur : " + msg);
+      return;
     }
+    if ([state.incomingTotal, state.outgoingTotal, state.handled, state.missed,
+         state.rdvTotal, state.smsTotal].some((n) => n < 0)) {
+      const msg = "Les valeurs ne peuvent pas être négatives";
+      toast.error(msg); setMessage("Erreur : " + msg);
+      return;
+    }
+
+    await run(async () => {
+      try {
+        const report = await upsertReport({ date, campaignId, ...state });
+        setReportId(report.id);
+        if (submit) {
+          await submitReport(report.id);
+          toast.success("Rapport soumis avec succès !");
+          setMessage("Rapport soumis avec succès.");
+        } else {
+          toast.info("Brouillon enregistré.");
+          setMessage("Brouillon enregistré.");
+        }
+      } catch (err: any) {
+        const errorMsg = err.message || "Impossible d'enregistrer le rapport";
+        toast.error(errorMsg);
+        setMessage("Erreur : " + errorMsg);
+      }
+    });
   }
 
   return (
@@ -236,13 +264,13 @@ export function RapportPage() {
       </div>
 
       <div className="row" style={{ marginTop: 24, borderTop: "1px solid var(--border)", paddingTop: "24px" }}>
-        <button className="btn btn-secondary" disabled={!campaignId} onClick={() => save(false)}>
+        <button className="btn btn-secondary" disabled={!campaignId || busy} onClick={() => save(false)}>
           <Save size={18} />
-          Enregistrer brouillon
+          {busy ? "Enregistrement..." : "Enregistrer brouillon"}
         </button>
-        <button className="btn btn-primary" disabled={!campaignId} onClick={() => save(true)}>
+        <button className="btn btn-primary" disabled={!campaignId || busy} onClick={() => save(true)}>
           <Send size={18} />
-          Soumettre le rapport
+          {busy ? "Soumission..." : "Soumettre le rapport"}
         </button>
         {reportId && (
           <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8 }} className="muted">
@@ -278,8 +306,7 @@ export function MesSaisiesPage() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => { 
-    const qp = new URLSearchParams({ ...(user?.id ? { userId: user.id } : {}) });
-    request<DailyReport[]>(`/reports?${qp.toString()}`)
+    getReports({ userId: user?.id })
       .then(setReports)
       .finally(() => setLoading(false)); 
   }, [user?.id]);
@@ -315,31 +342,40 @@ export function ValidationPage() {
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [loading, setLoading] = useState(false);
 
-  useEffect(() => { request<Campaign[]>("/campaigns").then(setCampaigns); }, []);
+  useEffect(() => { getCampaigns().then(setCampaigns); }, []);
   
   useEffect(() => {
     setLoading(true);
-    const qp = new URLSearchParams({ 
+    getReports({ 
       status: "SUBMITTED", 
       ...(campaignId ? { campaignId } : {}),
       ...(dateFrom ? { dateFrom } : {}),
       ...(dateTo ? { dateTo } : {})
-    });
-    request<DailyReport[]>(`/reports?${qp.toString()}`)
+    })
       .then(setReports)
       .finally(() => setLoading(false));
   }, [campaignId, dateFrom, dateTo]);
 
   const [rejectReasons, setRejectReasons] = useState<Record<string, string>>({});
+  const [acting, setActing] = useState<Set<string>>(new Set());
 
   async function act(id: string, action: "validate" | "reject") {
-    const body: any = { action };
-    if (action === "reject" && rejectReasons[id]) {
-      body.reason = rejectReasons[id];
+    if (acting.has(id)) return; // anti double-submit
+    if (action === "reject" && !(rejectReasons[id] || "").trim()) {
+      toast.error("Merci d'indiquer une raison de rejet");
+      return;
     }
-    await request(`/reports/${id}`, "PATCH", body);
-    setReports((prev) => prev.filter((r) => r.id !== id));
-    setRejectReasons((prev) => { const next = { ...prev }; delete next[id]; return next; });
+    setActing((prev) => new Set(prev).add(id));
+    try {
+      await actionReport(id, action, action === "reject" ? rejectReasons[id] : undefined);
+      setReports((prev) => prev.filter((r) => r.id !== id));
+      setRejectReasons((prev) => { const next = { ...prev }; delete next[id]; return next; });
+      toast.success(action === "validate" ? "Rapport validé" : "Rapport rejeté");
+    } catch (err: any) {
+      toast.error(err.message || "Action impossible");
+    } finally {
+      setActing((prev) => { const next = new Set(prev); next.delete(id); return next; });
+    }
   }
 
   return (
@@ -465,13 +501,22 @@ export function ValidationPage() {
                   />
                 </div>
                 <div style={{ display: "flex", gap: "12px" }}>
-                  <button className="btn btn-primary" onClick={() => act(r.id, "validate")} style={{ background: "var(--success)" }}>
+                  <button
+                    className="btn btn-primary"
+                    onClick={() => act(r.id, "validate")}
+                    disabled={acting.has(r.id)}
+                    style={{ background: "var(--success)" }}
+                  >
                     <CheckSquare size={18} />
-                    Valider le rapport
+                    {acting.has(r.id) ? "Validation..." : "Valider le rapport"}
                   </button>
-                  <button className="btn btn-danger" onClick={() => act(r.id, "reject")}>
+                  <button
+                    className="btn btn-danger"
+                    onClick={() => act(r.id, "reject")}
+                    disabled={acting.has(r.id)}
+                  >
                     <AlertCircle size={18} />
-                    Rejeter
+                    {acting.has(r.id) ? "Rejet..." : "Rejeter"}
                   </button>
                 </div>
               </div>
@@ -504,22 +549,21 @@ export function DashboardPage() {
 
   useEffect(() => {
     // On ne charge que les campagnes auxquelles l'utilisateur a accès
-    request<Campaign[]>("/campaigns").then(setCampaigns);
+    getCampaigns().then(setCampaigns);
     if (user?.role === 'ADMIN' || user?.role === 'SUPERVISEUR') {
-      request<UserRow[]>("/users").then(setUsers).catch(() => setUsers([]));
+      getUsers().then(setUsers).catch(() => setUsers([]));
     }
   }, [user]);
 
   const loadData = (cid: string, from: string, to: string, mode: 'PERSONAL' | 'TEAM') => {
     setLoading(true);
-    const qp = new URLSearchParams({ 
+    getReports({ 
       ...(cid ? { campaignId: cid } : {}),
       ...(from ? { dateFrom: from } : {}),
       ...(to ? { dateTo: to } : {}),
       ...(mode === 'PERSONAL' ? { userId: user?.id } : {}),
       ...(mode === 'TEAM' ? { status: 'VALIDATED' } : {})
-    });
-    request<DailyReport[]>(`/reports?${qp.toString()}`)
+    })
       .then(setReports)
       .finally(() => setLoading(false));
   };
@@ -846,7 +890,7 @@ export function AllReportsPage() {
   const [dateTo, setDateTo] = useState("");
 
   useEffect(() => {
-    request<Campaign[]>("/campaigns").then(setCampaigns);
+    getCampaigns().then(setCampaigns);
     load();
   }, []);
 
@@ -857,7 +901,7 @@ export function AllReportsPage() {
       ...(dateFrom ? { dateFrom } : {}),
       ...(dateTo ? { dateTo } : {})
     });
-    request<DailyReport[]>(`/reports?${qp.toString()}`)
+    getReports({ campaignId, ...(dateFrom ? { dateFrom } : {}), ...(dateTo ? { dateTo } : {}) })
       .then(setReports)
       .finally(() => setLoading(false));
   };
@@ -908,11 +952,13 @@ export function CampagnesPage() {
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [name, setName] = useState("");
   const [loading, setLoading] = useState(true);
+  const [busy, run] = useAsync();
+  const [toDelete, setToDelete] = useState<Campaign | null>(null);
   const navigate = useNavigate();
-  
+
   const load = () => {
     setLoading(true);
-    request<Campaign[]>("/campaigns")
+    getCampaigns()
       .then(setCampaigns)
       .finally(() => setLoading(false));
   };
@@ -938,9 +984,22 @@ export function CampagnesPage() {
             <label className="label" htmlFor="campaign-name">Nom de la campagne</label>
             <input id="campaign-name" className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="Ex: AXA Prévoyance" />
           </div>
-          <button className="btn btn-primary" onClick={async () => { await request("/campaigns", "POST", { name }); setName(""); load(); }}>
+          <button
+            className="btn btn-primary"
+            disabled={!name.trim() || busy}
+            onClick={() => run(async () => {
+              try {
+                await createCampaign(name);
+                toast.success("Campagne créée");
+                setName("");
+                load();
+              } catch (err: any) {
+                toast.error(err.message || "Impossible de créer la campagne");
+              }
+            })}
+          >
             <Plus size={18} />
-            Créer
+            {busy ? "Création..." : "Créer"}
           </button>
         </div>
       </div>
@@ -968,12 +1027,18 @@ export function CampagnesPage() {
                 <button
                   className="btn btn-secondary"
                   style={{ flex: 1, fontSize: "13px" }}
-                  onClick={async () => {
+                  disabled={busy}
+                  onClick={() => run(async () => {
                     const nextName = prompt("Nouveau nom de campagne", c.name);
-                    if (!nextName) return;
-                    await request(`/campaigns/${c.id}`, "PUT", { name: nextName });
-                    load();
-                  }}
+                    if (!nextName || nextName === c.name) return;
+                    try {
+                      await updateCampaign(c.id, { name: nextName });
+                      toast.success("Campagne modifiée");
+                      load();
+                    } catch (err: any) {
+                      toast.error(err.message || "Erreur");
+                    }
+                  })}
                 >
                   Modifier
                 </button>
@@ -984,17 +1049,27 @@ export function CampagnesPage() {
                 >
                   Voir l'équipe
                 </button>
-                <button 
-                  className="btn btn-secondary" 
+                <button
+                  className="btn btn-secondary"
                   style={{ flex: 1, fontSize: "13px" }}
-                  onClick={async () => { await request(`/campaigns/${c.id}`, "PUT", { active: !c.active }); load(); }}
+                  disabled={busy}
+                  onClick={() => run(async () => {
+                    try {
+                      await updateCampaign(c.id, { active: !c.active });
+                      toast.success(c.active ? "Campagne désactivée" : "Campagne activée");
+                      load();
+                    } catch (err: any) {
+                      toast.error(err.message || "Erreur");
+                    }
+                  })}
                 >
                   {c.active ? "Désactiver" : "Activer"}
                 </button>
-                <button 
-                  className="btn btn-danger" 
+                <button
+                  className="btn btn-danger"
                   style={{ flex: 1, fontSize: "13px" }}
-                  onClick={async () => { if(confirm("Supprimer cette campagne ?")) { await request(`/campaigns/${c.id}`, "DELETE"); load(); } }}
+                  disabled={busy}
+                  onClick={() => setToDelete(c)}
                 >
                   Supprimer
                 </button>
@@ -1003,6 +1078,33 @@ export function CampagnesPage() {
           ))}
         </div>
       )}
+
+      <ConfirmModal
+        open={!!toDelete}
+        title="Supprimer la campagne"
+        message={
+          <>
+            La campagne <strong>{toDelete?.name}</strong> et tous ses rapports
+            associés seront <strong>définitivement supprimés</strong>. Cette action
+            est <strong>irréversible</strong>.
+          </>
+        }
+        confirmLabel="Supprimer définitivement"
+        variant="danger"
+        busy={busy}
+        onCancel={() => setToDelete(null)}
+        onConfirm={() => run(async () => {
+          if (!toDelete) return;
+          try {
+            await deleteCampaign(toDelete.id);
+            toast.success("Campagne supprimée");
+            setToDelete(null);
+            load();
+          } catch (err: any) {
+            toast.error(err.message || "Impossible de supprimer");
+          }
+        })}
+      />
     </div>
   );
 }
@@ -1016,8 +1118,8 @@ export function EquipesPage() {
   const [searchParams] = useSearchParams();
 
   useEffect(() => { 
-    request<Campaign[]>("/campaigns").then(setCampaigns); 
-    request<UserRow[]>("/users").then(setUsers).catch(() => setUsers([])); 
+    getCampaigns().then(setCampaigns); 
+    getUsers().then(setUsers).catch(() => setUsers([])); 
   }, []);
 
   useEffect(() => {
@@ -1095,9 +1197,9 @@ export function EquipesPage() {
                           onChange={async (e) => { 
                             const tId = toast.loading("Mise à jour...");
                             try {
-                              await request("/users", "PATCH", { userId: u.id, role: e.target.value }); 
+                              await updateUserRole(u.id, e.target.value); 
                               toast.success("Rôle mis à jour", { id: tId });
-                              request<UserRow[]>("/users").then(setUsers); 
+                              getUsers().then(setUsers); 
                             } catch (err: any) {
                               toast.error("Erreur", { id: tId });
                             }
@@ -1120,7 +1222,7 @@ export function EquipesPage() {
                 onClick={async () => { 
                   setSaving(true);
                   try {
-                    await request("/teams", "POST", { campaignId, userIds: selected }); 
+                    await assignTeam(campaignId, selected); 
                     toast.success("Équipe mise à jour avec succès"); 
                   } finally {
                     setSaving(false);
@@ -1138,46 +1240,57 @@ export function EquipesPage() {
 }
 
 export function UtilisateursPage() {
+  const { user: currentUser } = useAuth();
   const [users, setUsers] = useState<UserRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [showInvite, setShowInvite] = useState(false);
   const [inviteData, setInviteData] = useState({ email: "", name: "", role: "TELECONSEILLER" as any });
-  const [inviteMsg, setInviteMsg] = useState("");
   const [searchTerm, setSearchTerm] = useState("");
+  const [busy, run] = useAsync();
+  const [toDelete, setToDelete] = useState<UserRow | null>(null);
+  const [toToggle, setToToggle] = useState<UserRow | null>(null);
 
   const load = () => {
     setLoading(true);
-    request<UserRow[]>("/users")
-      .then(setUsers)
+    getUsers()
+      .then(setUsers as any)
       .finally(() => setLoading(false));
   };
-  
+
   useEffect(() => { load(); }, []);
 
   const filteredUsers = useMemo(() => {
-    return users.filter(u => 
-      (u.name?.toLowerCase() || "").includes(searchTerm.toLowerCase()) || 
+    return users.filter((u) =>
+      (u.name?.toLowerCase() || "").includes(searchTerm.toLowerCase()) ||
       u.email.toLowerCase().includes(searchTerm.toLowerCase())
     );
   }, [users, searchTerm]);
 
-  const handleInvite = async (e: React.FormEvent) => {
+  const handleInvite = (e: React.FormEvent) => {
     e.preventDefault();
-    setInviteMsg("");
-    const tId = toast.loading("Envoi de l'invitation...");
-    try {
-      await request("/auth/invite", "POST", inviteData);
-      toast.success("Utilisateur invité avec succès !", { id: tId });
-      setInviteMsg("Invitation envoyée !");
-      setInviteData({ email: "", name: "", role: "TELECONSEILLER" });
-      setShowInvite(false);
-      load();
-    } catch (err: any) {
-      const errorMsg = err.message || "Impossible d'inviter";
-      toast.error(errorMsg, { id: tId });
-      setInviteMsg("Erreur : " + errorMsg);
-    }
+    run(async () => {
+      const tId = toast.loading("Envoi de l'invitation...");
+      try {
+        await inviteUser(inviteData.email, inviteData.name, inviteData.role);
+        toast.success("Utilisateur invité avec succès !", { id: tId });
+        setInviteData({ email: "", name: "", role: "TELECONSEILLER" });
+        setShowInvite(false);
+        load();
+      } catch (err: any) {
+        toast.error(err.message || "Impossible d'inviter", { id: tId });
+      }
+    });
   };
+
+  const handleResend = (u: UserRow) => run(async () => {
+    const tId = toast.loading("Renvoi de l'invitation...");
+    try {
+      await resendInvite(u.id);
+      toast.success(`Invitation renvoyée à ${u.email}`, { id: tId });
+    } catch (err: any) {
+      toast.error(err.message || "Impossible de renvoyer", { id: tId });
+    }
+  });
 
   return (
     <div>
@@ -1214,18 +1327,26 @@ export function UtilisateursPage() {
             </div>
           ) : (
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))", gap: "16px" }}>
-              {filteredUsers.map((u) => (
-                <div key={u.id} className="card user-card" style={{ margin: 0, padding: "20px", position: "relative" }}>
+              {filteredUsers.map((u) => {
+                const isActive = u.active !== false;
+                const isSelf = u.id === currentUser?.id;
+                return (
+                <div key={u.id} className="card user-card" style={{
+                  margin: 0, padding: "20px", position: "relative",
+                  opacity: isActive ? 1 : 0.55,
+                }}>
                   <div style={{ display: "flex", alignItems: "center", gap: "16px", marginBottom: "16px" }}>
-                    <div style={{ 
-                      width: "48px", 
-                      height: "48px", 
-                      borderRadius: "12px", 
-                      background: "linear-gradient(135deg, var(--primary) 0%, #3b82f6 100%)", 
-                      display: "flex", 
-                      alignItems: "center", 
-                      justifyContent: "center", 
-                      fontWeight: 700, 
+                    <div style={{
+                      width: "48px",
+                      height: "48px",
+                      borderRadius: "12px",
+                      background: isActive
+                        ? "linear-gradient(135deg, var(--primary) 0%, #3b82f6 100%)"
+                        : "linear-gradient(135deg, #94a3b8 0%, #64748b 100%)",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      fontWeight: 700,
                       fontSize: "18px",
                       color: "white",
                       boxShadow: "0 4px 12px rgba(37, 99, 235, 0.2)"
@@ -1233,7 +1354,12 @@ export function UtilisateursPage() {
                       {(u.name || u.email).charAt(0).toUpperCase()}
                     </div>
                     <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontWeight: 700, fontSize: "16px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{u.name ?? "Sans nom"}</div>
+                      <div style={{ fontWeight: 700, fontSize: "16px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                        {u.name ?? "Sans nom"}
+                        {!isActive && (
+                          <span className="badge" style={{ marginLeft: 8, fontSize: 10, background: "#e2e8f0", color: "#475569" }}>Désactivé</span>
+                        )}
+                      </div>
                       <div className="muted" style={{ fontSize: "13px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{u.email}</div>
                     </div>
                   </div>
@@ -1241,20 +1367,21 @@ export function UtilisateursPage() {
                   <div style={{ display: "grid", gap: "12px" }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                       <span className="muted" style={{ fontSize: "12px", fontWeight: 600 }}>RÔLE</span>
-                      <select 
-                        className="select" 
+                      <select
+                        className="select"
                         style={{ padding: "4px 8px", fontSize: "12px", width: "auto", height: "auto" }}
-                        value={u.role} 
-                        onChange={async (e) => { 
+                        value={u.role}
+                        disabled={busy || isSelf}
+                        onChange={(e) => run(async () => {
                           const tId = toast.loading("Mise à jour du rôle...");
                           try {
-                            await request("/users", "PATCH", { userId: u.id, role: e.target.value }); 
+                            await updateUserRole(u.id, e.target.value);
                             toast.success("Rôle mis à jour", { id: tId });
-                            load(); 
+                            load();
                           } catch (err: any) {
-                            toast.error("Erreur", { id: tId });
+                            toast.error(err.message || "Erreur", { id: tId });
                           }
-                        }}
+                        })}
                       >
                         <option value="TELECONSEILLER">Téléconseiller</option>
                         <option value="SUPERVISEUR">Superviseur</option>
@@ -1276,9 +1403,42 @@ export function UtilisateursPage() {
                         )}
                       </div>
                     </div>
+
+                    <div style={{ borderTop: "1px solid #f1f5f9", paddingTop: "12px", display: "flex", flexWrap: "wrap", gap: 6 }}>
+                      <button
+                        className="btn btn-secondary"
+                        style={{ flex: 1, fontSize: 11, padding: "6px 8px", minWidth: 90 }}
+                        disabled={busy}
+                        onClick={() => handleResend(u)}
+                        title="Renvoyer un nouveau lien d'invitation par email"
+                      >
+                        Renvoyer
+                      </button>
+                      {!isSelf && (
+                        <button
+                          className="btn btn-secondary"
+                          style={{ flex: 1, fontSize: 11, padding: "6px 8px", minWidth: 90 }}
+                          disabled={busy}
+                          onClick={() => setToToggle(u)}
+                        >
+                          {isActive ? "Désactiver" : "Réactiver"}
+                        </button>
+                      )}
+                      {!isSelf && (
+                        <button
+                          className="btn btn-danger"
+                          style={{ flex: 1, fontSize: 11, padding: "6px 8px", minWidth: 90 }}
+                          disabled={busy}
+                          onClick={() => setToDelete(u)}
+                        >
+                          Supprimer
+                        </button>
+                      )}
+                    </div>
                   </div>
                 </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
@@ -1306,48 +1466,164 @@ export function UtilisateursPage() {
                   <option value="ADMIN">Administrateur</option>
                 </select>
               </div>
-              <button type="submit" className="btn btn-primary" style={{ marginTop: "8px", height: "44px" }}>
-                Envoyer l'invitation
+              <button
+                type="submit"
+                className="btn btn-primary"
+                style={{ marginTop: "8px", height: "44px" }}
+                disabled={busy}
+              >
+                {busy ? "Envoi en cours..." : "Envoyer l'invitation"}
               </button>
             </form>
           </div>
         )}
       </div>
+
+      <ConfirmModal
+        open={!!toDelete}
+        title="Supprimer l'utilisateur"
+        message={
+          <>
+            Le compte <strong>{toDelete?.email}</strong> et ses données associées
+            (rapports, notifications) seront <strong>définitivement supprimés</strong>.
+            Cette action est <strong>irréversible</strong>. Pour conserver l'historique,
+            préférez "Désactiver".
+          </>
+        }
+        confirmLabel="Supprimer définitivement"
+        variant="danger"
+        busy={busy}
+        onCancel={() => setToDelete(null)}
+        onConfirm={() => run(async () => {
+          if (!toDelete) return;
+          try {
+            await deleteUser(toDelete.id);
+            toast.success("Utilisateur supprimé");
+            setToDelete(null);
+            load();
+          } catch (err: any) {
+            toast.error(err.message || "Impossible de supprimer");
+          }
+        })}
+      />
+
+      <ConfirmModal
+        open={!!toToggle}
+        title={toToggle?.active === false ? "Réactiver le compte" : "Désactiver le compte"}
+        message={
+          toToggle?.active === false ? (
+            <>
+              Réactiver <strong>{toToggle?.email}</strong> ? L'utilisateur pourra à
+              nouveau se connecter et travailler.
+            </>
+          ) : (
+            <>
+              Désactiver <strong>{toToggle?.email}</strong> ? L'utilisateur ne pourra
+              plus se connecter, mais ses données (rapports, historique) seront
+              conservées.
+            </>
+          )
+        }
+        confirmLabel={toToggle?.active === false ? "Réactiver" : "Désactiver"}
+        variant={toToggle?.active === false ? "primary" : "danger"}
+        busy={busy}
+        onCancel={() => setToToggle(null)}
+        onConfirm={() => run(async () => {
+          if (!toToggle) return;
+          try {
+            await setUserActive(toToggle.id, toToggle.active === false);
+            toast.success(toToggle.active === false ? "Compte réactivé" : "Compte désactivé");
+            setToToggle(null);
+            load();
+          } catch (err: any) {
+            toast.error(err.message || "Impossible de modifier l'état");
+          }
+        })}
+      />
     </div>
   );
 }
 
 export function SetupPasswordPage() {
-  const [params] = useSearchParams();
+  // Supabase Auth puts the recovery/invite token in the URL hash
+  // (#access_token=...&type=invite|recovery). The client we configured with
+  // `detectSessionInUrl: true` consumes it automatically and creates a
+  // session, so we just need to call updateUser({ password }) here.
   const navigate = useNavigate();
-  const token = params.get("token");
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [msg, setMsg] = useState("");
-  const [loading, setLoading] = useState(false);
+  const [sessionReady, setSessionReady] = useState(false);
+  const [busy, run] = useAsync();
 
-  if (!token) return <Navigate to="/login" />;
+  useEffect(() => {
+    // We listen for the first valid session
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      console.log("[SetupPassword] Auth event:", event, !!session);
+      if (session) {
+        setMsg("");
+        setSessionReady(true);
+      }
+    });
 
-  const handleSubmit = async (e: React.FormEvent) => {
+    // Check immediately too
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (!session) {
+        setMsg("Attente de la session... Si ce message persiste, le lien est invalide.");
+        setSessionReady(false);
+      } else {
+        setMsg("");
+        setSessionReady(true);
+      }
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
+
+  const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (password !== confirm) return setMsg("Les mots de passe ne correspondent pas");
-    setLoading(true);
-    try {
-      await request("/auth/setup-password", "POST", { token, password });
-      setMsg("Succès ! Redirection vers la connexion...");
-      setTimeout(() => navigate("/login"), 2000);
-    } catch (err: any) {
-      setMsg("Erreur : " + (err.message || "Impossible de configurer le mot de passe"));
-    } finally {
-      setLoading(false);
+    if (!sessionReady) {
+      return setMsg("Erreur : session non prête. Veuillez attendre ou actualiser.");
     }
+    setMsg("");
+    if (password.length < 8) return setMsg("Erreur : 8 caractères minimum");
+    if (password !== confirm) return setMsg("Erreur : les mots de passe ne correspondent pas");
+    run(async () => {
+      try {
+        console.log("[SetupPassword] Updating user password...");
+        
+        // Wrap the update in a timeout to avoid hanging forever
+        const updatePromise = supabase.auth.updateUser({ password: password });
+        const timeoutPromise = new Promise((_, reject) => 
+          setTimeout(() => reject(new Error("Délai d'attente dépassé. Veuillez réessayer.")), 15000)
+        );
+
+        const { error } = await Promise.race([updatePromise, timeoutPromise]) as any;
+        if (error) throw error;
+
+        console.log("[SetupPassword] Success!");
+        setMsg("Succès ! Redirection...");
+        toast.success("Mot de passe configuré");
+        
+        // Give time for AuthProvider to receive the USER_UPDATED event
+        setTimeout(() => navigate("/"), 1500);
+      } catch (err: any) {
+        console.error("[SetupPassword] Error:", err);
+        setMsg("Erreur : " + (err.message || "Lien expiré ou invalide"));
+      }
+    });
   };
 
   return (
     <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "var(--background)" }}>
       <div className="card" style={{ maxWidth: 400, width: "100%" }}>
-        <h2>Configurer votre compte</h2>
-        <p className="muted">Veuillez choisir votre mot de passe pour finaliser votre inscription.</p>
+        <div style={{ textAlign: "center", marginBottom: "24px" }}>
+          <div style={{ width: "180px", margin: "0 auto 16px" }}>
+            <img src="/logo.png" alt="2C Conseil" style={{ maxWidth: '100%', height: 'auto' }} />
+          </div>
+          <h2>Configurer votre compte</h2>
+          <p className="muted">Choisissez votre mot de passe pour finaliser votre inscription.</p>
+        </div>
         <form onSubmit={handleSubmit} style={{ marginTop: "24px", display: "grid", gap: "16px" }}>
           <div className="field">
             <label className="label">Nouveau mot de passe</label>
@@ -1357,8 +1633,8 @@ export function SetupPasswordPage() {
             <label className="label">Confirmer le mot de passe</label>
             <input className="input" type="password" value={confirm} onChange={e => setConfirm(e.target.value)} required />
           </div>
-          <button type="submit" className="btn btn-primary" disabled={loading}>
-            {loading ? "Chargement..." : "Enregistrer et continuer"}
+          <button type="submit" className="btn btn-primary" disabled={busy || !sessionReady}>
+            {busy ? "Enregistrement..." : "Enregistrer et continuer"}
           </button>
           {msg && <p className="muted" style={{ color: msg.includes("Erreur") ? "var(--danger)" : "var(--success)" }}>{msg}</p>}
         </form>
@@ -1379,38 +1655,57 @@ type NotificationRow = {
 export function NotificationsPage() {
   const [notifications, setNotifications] = useState<NotificationRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [busy, run] = useAsync();
+  const [confirmClearAll, setConfirmClearAll] = useState(false);
 
   const load = () => {
     setLoading(true);
-    request<NotificationRow[]>("/notifications")
+    getNotifications()
       .then(setNotifications)
       .finally(() => setLoading(false));
   };
 
   useEffect(() => { load(); }, []);
 
-  const markAsRead = async (id: string) => {
-    await request(`/notifications/${id}/read`, "PATCH");
-    setNotifications((prev) => prev.map(n => n.id === id ? { ...n, read: true } : n));
-  };
+  const markAsRead = (id: string) => run(async () => {
+    try {
+      await markNotificationRead(id);
+      setNotifications((prev) => prev.map((n) => (n.id === id ? { ...n, read: true } : n)));
+    } catch (err: any) {
+      toast.error(err.message || "Erreur");
+    }
+  });
 
-  const markAllRead = async () => {
-    await request("/notifications/read-all", "PATCH");
-    setNotifications((prev) => prev.map(n => ({ ...n, read: true })));
-    toast.success("Toutes les notifications marquées comme lues");
-  };
+  const markAllRead = () => run(async () => {
+    try {
+      await markAllNotificationsRead();
+      setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
+      toast.success("Toutes les notifications marquées comme lues");
+    } catch (err: any) {
+      toast.error(err.message || "Erreur");
+    }
+  });
 
-  const deleteNotification = async (id: string) => {
-    await request(`/notifications/${id}`, "DELETE");
-    setNotifications((prev) => prev.filter(n => n.id !== id));
-    toast.success("Notification supprimée");
-  };
+  const handleDeleteNotification = (id: string) => run(async () => {
+    try {
+      await deleteNotification(id);
+      setNotifications((prev) => prev.filter((n) => n.id !== id));
+      toast.success("Notification supprimée");
+    } catch (err: any) {
+      toast.error(err.message || "Erreur");
+    }
+  });
 
-  const clearAll = async () => {
-    await request("/notifications", "DELETE");
-    setNotifications([]);
-    toast.success("Toutes les notifications ont été effacées");
-  };
+  const clearAll = () => run(async () => {
+    try {
+      await deleteAllNotifications();
+      setNotifications([]);
+      setConfirmClearAll(false);
+      toast.success("Toutes les notifications ont été effacées");
+    } catch (err: any) {
+      toast.error(err.message || "Erreur");
+    }
+  });
 
   const getTypeIcon = (type: string) => {
     switch (type) {
@@ -1454,7 +1749,11 @@ export function NotificationsPage() {
               Tout marquer comme lu
             </button>
           )}
-          <button className="btn btn-secondary" onClick={clearAll} disabled={notifications.length === 0}>
+          <button
+            className="btn btn-secondary"
+            onClick={() => setConfirmClearAll(true)}
+            disabled={notifications.length === 0 || busy}
+          >
             <Trash2 size={16} />
             Tout effacer
           </button>
@@ -1510,7 +1809,7 @@ export function NotificationsPage() {
                             </button>
                           )}
                           <button 
-                            onClick={() => deleteNotification(n.id)} 
+                            onClick={() => handleDeleteNotification(n.id)} 
                             className="btn-icon" 
                             title="Supprimer"
                             style={{ padding: "4px", color: "var(--danger)" }}
@@ -1536,6 +1835,17 @@ export function NotificationsPage() {
           )}
         </div>
       )}
+
+      <ConfirmModal
+        open={confirmClearAll}
+        title="Effacer toutes les notifications"
+        message="Toutes vos notifications seront définitivement supprimées. Cette action est irréversible."
+        confirmLabel="Tout effacer"
+        variant="danger"
+        busy={busy}
+        onCancel={() => setConfirmClearAll(false)}
+        onConfirm={clearAll}
+      />
     </div>
   );
 }
@@ -1550,7 +1860,7 @@ export function ForgotPasswordPage() {
     e.preventDefault();
     setLoading(true);
     try {
-      await request("/auth/forgot-password", "POST", { email });
+      await forgotPassword(email);
       setSent(true);
     } catch {
       setSent(true); // Même en cas d'erreur, on montre le même message pour ne pas révéler les emails
@@ -1563,8 +1873,8 @@ export function ForgotPasswordPage() {
     <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "linear-gradient(135deg, #1e293b 0%, #0f172a 100%)", padding: "20px" }}>
       <div style={{ maxWidth: 400, width: "100%" }} className="card">
         <div style={{ textAlign: "center", marginBottom: "32px" }}>
-          <div style={{ width: "56px", height: "56px", background: "rgba(37, 99, 235, 0.1)", borderRadius: "14px", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px" }}>
-            <TrendingUp size={30} color="var(--primary)" />
+          <div style={{ width: "200px", margin: "0 auto 16px" }}>
+            <img src="/logo.png" alt="2C Conseil" style={{ maxWidth: '100%', height: 'auto' }} />
           </div>
           <h2 style={{ marginBottom: "8px" }}>Mot de passe oublié</h2>
           <p className="muted">Entrez votre email pour recevoir un lien de réinitialisation</p>
@@ -1612,7 +1922,7 @@ export function ChangePasswordPage() {
     setLoading(true);
     setMsg("");
     try {
-      await request("/auth/change-password", "POST", { currentPassword, newPassword });
+      await changePassword(currentPassword, newPassword);
       toast.success("Mot de passe modifié avec succès");
       navigate(-1);
     } catch (err: any) {
@@ -1656,7 +1966,7 @@ export function ExportPage() {
   const [dateFrom, setDateFrom] = useState(new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10));
   const [dateTo, setDateTo] = useState(new Date().toISOString().slice(0, 10));
 
-  useEffect(() => { request<Campaign[]>("/campaigns").then(setCampaigns); }, []);
+  useEffect(() => { getCampaigns().then(setCampaigns); }, []);
 
   async function doExport() {
     const qp = new URLSearchParams({ 
@@ -1666,7 +1976,7 @@ export function ExportPage() {
     });
     const tId = toast.loading("Génération du fichier Excel...");
     try {
-      const blob = await request<Blob>(`/export?${qp.toString()}`, "GET", undefined, true);
+      const blob = await exportReports(campaignId, dateFrom, dateTo);
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
@@ -1815,18 +2125,11 @@ export function LoginPage() {
       <div style={{ maxWidth: 400, width: "100%" }} className="card">
         <div style={{ textAlign: "center", marginBottom: "32px" }}>
           <div style={{ 
-            width: "56px", 
-            height: "56px", 
-            background: "rgba(37, 99, 235, 0.1)", 
-            borderRadius: "14px", 
-            display: "flex", 
-            alignItems: "center", 
-            justifyContent: "center",
+            width: "220px", 
             margin: "0 auto 16px"
           }}>
-            <TrendingUp size={30} color="var(--primary)" />
+            <img src="/logo.png" alt="2C Conseil" style={{ maxWidth: '100%', height: 'auto' }} />
           </div>
-          <h2 style={{ marginBottom: "8px" }}>CRC Reporting</h2>
           <p className="muted">Connectez-vous pour accéder au portail</p>
         </div>
 
@@ -1883,8 +2186,8 @@ export function LoginPage() {
               setError("");
               try {
                 await login(email, password);
-              } catch {
-                setError("Email ou mot de passe incorrect");
+              } catch (err: any) {
+                setError(err.message || "Email ou mot de passe incorrect");
               } finally {
                 setLoading(false);
               }

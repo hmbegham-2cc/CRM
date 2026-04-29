@@ -1,19 +1,9 @@
 {
-  "buildCommand": "pnpm install && pnpm --filter @crc/db db:generate && pnpm --filter @crc/api build && pnpm --filter @crc/web build",
+  "buildCommand": "pnpm install && pnpm --filter @crc/web build",
   "outputDirectory": "apps/web/dist",
-  "functions": {
-    "api/index.js": {
-      "includeFiles": "apps/api/dist/**",
-      "excludeFiles": "**/*.map"
-    }
-  },
   "rewrites": [
     {
-      "source": "/api/v1/:path*",
-      "destination": "/api/index.js"
-    },
-    {
-      "source": "/((?!api/).*)",
+      "source": "/((?!assets/).*)",
       "destination": "/index.html"
     }
   ]

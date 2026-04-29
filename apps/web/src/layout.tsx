@@ -1,20 +1,20 @@
 import { Link, Outlet, useLocation } from "react-router-dom";
 import { useState, useEffect } from "react";
 import { useAuth } from "./auth";
-import { request } from "./api";
-import { 
-  LayoutDashboard, 
-  FileEdit, 
-  History, 
-  CheckCircle, 
-  Settings, 
-  Users, 
-  Database, 
-  Download, 
+import { supabase } from "./supabase";
+import { OfflineBanner } from "./components/OfflineBanner";
+import {
+  LayoutDashboard,
+  FileEdit,
+  History,
+  CheckCircle,
+  Settings,
+  Users,
+  Database,
+  Download,
   LogOut,
-  Menu,
   Bell,
-  Key
+  Key,
 } from "lucide-react";
 
 export function AppLayout() {
@@ -40,8 +40,8 @@ export function AppLayout() {
   useEffect(() => {
     const checkUnread = async () => {
       try {
-        const notifications = await request<{ id: string; read: boolean }[]>('/notifications');
-        setHasUnread(notifications.some(n => !n.read));
+        const { data } = await supabase.from("Notification").select("id, read").eq("read", false).limit(1);
+        setHasUnread((data || []).length > 0);
       } catch {
         setHasUnread(false);
       }
@@ -54,7 +54,9 @@ export function AppLayout() {
   return (
     <div className="layout">
       <aside className="sidebar">
-        <div className="brand">CRC Reporting</div>
+        <div className="brand">
+          <img src="/logo.png" alt="2C Conseil" style={{ maxWidth: '100%', height: 'auto', display: 'block' }} />
+        </div>
         
         <nav style={{ flex: 1 }}>
           {filteredMenu.map((item) => {
@@ -107,6 +109,7 @@ export function AppLayout() {
       </aside>
 
       <main className="content">
+        <OfflineBanner />
         <Outlet />
       </main>
     </div>

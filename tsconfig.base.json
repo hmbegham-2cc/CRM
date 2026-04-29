@@ -10,8 +10,7 @@
     "forceConsistentCasingInFileNames": true,
     "baseUrl": ".",
     "paths": {
-      "@crc/types/*": ["packages/types/src/*"],
-      "@crc/db": ["packages/db/src/client.ts"]
+      "@crc/types/*": ["packages/types/src/*"]
     }
   }
 }
