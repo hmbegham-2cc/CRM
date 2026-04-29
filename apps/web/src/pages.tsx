@@ -48,7 +48,9 @@ import {
   CheckCircle2,
   XCircle,
   Trash2,
-  Check
+  Check,
+  ArrowUpRight,
+  ArrowDownRight
 } from "lucide-react";
 
 import {
@@ -63,7 +65,11 @@ import {
   LineChart,
   Line,
   AreaChart,
-  Area
+  Area,
+  PieChart,
+  Pie,
+  Cell,
+  ReferenceLine
 } from "recharts";
 
 type UserRow = {
@@ -538,12 +544,15 @@ export function DashboardPage() {
   const [campaignId, setCampaignId] = useState("");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
+  const [userIdFilter, setUserIdFilter] = useState("");
   
   const [pendingCampaignId, setPendingCampaignId] = useState("");
   const [pendingDateFrom, setPendingDateFrom] = useState("");
   const [pendingDateTo, setPendingDateTo] = useState("");
+  const [pendingUserId, setPendingUserId] = useState("");
 
   const [reports, setReports] = useState<DailyReport[]>([]);
+  const [prevReports, setPrevReports] = useState<DailyReport[]>([]);
   const [loading, setLoading] = useState(false);
   const dashboardRef = useRef<HTMLDivElement>(null);
 
@@ -555,29 +564,66 @@ export function DashboardPage() {
     }
   }, [user]);
 
-  const loadData = (cid: string, from: string, to: string, mode: 'PERSONAL' | 'TEAM') => {
+  const loadData = async (cid: string, from: string, to: string, uid: string, mode: 'PERSONAL' | 'TEAM') => {
     setLoading(true);
-    getReports({ 
-      ...(cid ? { campaignId: cid } : {}),
-      ...(from ? { dateFrom: from } : {}),
-      ...(to ? { dateTo: to } : {}),
-      ...(mode === 'PERSONAL' ? { userId: user?.id } : {}),
-      ...(mode === 'TEAM' ? { status: 'VALIDATED' } : {})
-    })
-      .then(setReports)
-      .finally(() => setLoading(false));
+    try {
+      const currentParams = {
+        ...(cid ? { campaignId: cid } : {}),
+        ...(from ? { dateFrom: from } : {}),
+        ...(to ? { dateTo: to } : {}),
+        ...(mode === 'PERSONAL' ? { userId: user?.id } : (uid ? { userId: uid } : {})),
+        ...(mode === 'TEAM' ? { status: 'VALIDATED' } : {})
+      };
+      
+      const currentData = await getReports(currentParams);
+      setReports(currentData);
+
+      // Calcul de la période précédente pour les tendances
+      if (from && to) {
+        const start = new Date(from);
+        const end = new Date(to);
+        const duration = end.getTime() - start.getTime();
+        
+        const prevEnd = new Date(start.getTime() - (24 * 60 * 60 * 1000));
+        const prevStart = new Date(prevEnd.getTime() - duration);
+
+        const prevParams = {
+          ...currentParams,
+          dateFrom: prevStart.toISOString().split('T')[0],
+          dateTo: prevEnd.toISOString().split('T')[0],
+        };
+        const previousData = await getReports(prevParams);
+        setPrevReports(previousData);
+      } else {
+        setPrevReports([]);
+      }
+    } catch (err) {
+      console.error("Erreur lors du chargement des données du dashboard", err);
+    } finally {
+      setLoading(false);
+    }
   };
 
-  // Chargement initial (tout par défaut, sans limite de date)
+  // Chargement initial (30 derniers jours par défaut pour avoir des tendances)
   useEffect(() => {
-    loadData("", "", "", viewMode);
+    const to = new Date().toISOString().split('T')[0];
+    const from = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+    setPendingDateFrom(from);
+    setPendingDateTo(to);
+    setPendingUserId("");
+    setCampaignId("");
+    setDateFrom(from);
+    setDateTo(to);
+    setUserIdFilter("");
+    loadData("", from, to, "", viewMode);
   }, []);
 
   const handleApplyFilters = () => {
     setCampaignId(pendingCampaignId);
     setDateFrom(pendingDateFrom);
     setDateTo(pendingDateTo);
-    loadData(pendingCampaignId, pendingDateFrom, pendingDateTo, viewMode);
+    setUserIdFilter(pendingUserId);
+    loadData(pendingCampaignId, pendingDateFrom, pendingDateTo, pendingUserId, viewMode);
     toast.success("Filtres appliqués");
   };
 
@@ -613,9 +659,31 @@ export function DashboardPage() {
     sms: reports.reduce((s, r) => s + (Number(r.smsTotal) || 0), 0),
   }), [reports]);
 
+  const prevStats = useMemo(() => ({
+    incoming: prevReports.reduce((s, r) => s + (Number(r.incomingTotal) || 0), 0),
+    outgoing: prevReports.reduce((s, r) => s + (Number(r.outgoingTotal) || 0), 0),
+    handled: prevReports.reduce((s, r) => s + (Number(r.handled) || 0), 0),
+    missed: prevReports.reduce((s, r) => s + (Number(r.missed) || 0), 0),
+    rdv: prevReports.reduce((s, r) => s + (Number(r.rdvTotal) || 0), 0),
+  }), [prevReports]);
+
+  const getTrend = (current: number, previous: number) => {
+    if (!previous || previous === 0) return null;
+    const diff = ((current - previous) / previous) * 100;
+    return {
+      value: Math.abs(diff).toFixed(1),
+      isUp: diff >= 0,
+      isPositive: diff >= 0 // Par défaut, monter est positif (sauf pour les manqués)
+    };
+  };
+
   const conversionRate = useMemo(() => {
     return stats.handled > 0 ? (stats.rdv / stats.handled * 100).toFixed(1) : "0.0";
   }, [stats]);
+
+  const prevConversionRate = useMemo(() => {
+    return prevStats.handled > 0 ? (prevStats.rdv / prevStats.handled * 100).toFixed(1) : "0.0";
+  }, [prevStats]);
 
   const chartData = useMemo(() => {
     const daily: Record<string, any> = {};
@@ -643,6 +711,19 @@ export function DashboardPage() {
     }));
   }, [chartData]);
 
+  const campaignStatsData = useMemo(() => {
+    const data: Record<string, number> = {};
+    reports.forEach(r => {
+      const name = r.campaign.name;
+      data[name] = (data[name] || 0) + (Number(r.handled) || 0);
+    });
+    return Object.entries(data)
+      .map(([name, value]) => ({ name, value }))
+      .sort((a, b) => b.value - a.value);
+  }, [reports]);
+
+  const COLORS = ['#ef4444', '#1e293b', '#3b82f6', '#10b981', '#f59e0b', '#6366f1'];
+
   return (
     <div ref={dashboardRef} style={{ padding: "4px" }}>
       <div className="card">
@@ -655,14 +736,14 @@ export function DashboardPage() {
               {(user?.role === 'SUPERVISEUR' || user?.role === 'ADMIN') && (
                 <div style={{ display: "flex", background: "#f1f5f9", padding: "4px", borderRadius: "8px", gap: "4px" }}>
                   <button 
-                    onClick={() => { setViewMode('TEAM'); loadData(pendingCampaignId, pendingDateFrom, pendingDateTo, 'TEAM'); }}
+                    onClick={() => { setViewMode('TEAM'); loadData(pendingCampaignId, pendingDateFrom, pendingDateTo, pendingUserId, 'TEAM'); }}
                     className={`btn ${viewMode === 'TEAM' ? 'btn-primary' : ''}`}
                     style={{ padding: "6px 12px", fontSize: "12px", height: "auto" }}
                   >
                     Vue Équipe
                   </button>
                   <button 
-                    onClick={() => { setViewMode('PERSONAL'); loadData(pendingCampaignId, pendingDateFrom, pendingDateTo, 'PERSONAL'); }}
+                    onClick={() => { setViewMode('PERSONAL'); loadData(pendingCampaignId, pendingDateFrom, pendingDateTo, "", 'PERSONAL'); }}
                     className={`btn ${viewMode === 'PERSONAL' ? 'btn-primary' : ''}`}
                     style={{ padding: "6px 12px", fontSize: "12px", height: "auto" }}
                   >
@@ -675,6 +756,7 @@ export function DashboardPage() {
               {viewMode === 'PERSONAL' 
                 ? 'Suivi de vos performances et indicateurs personnels' 
                 : 'Statistiques consolidées par campagne'}
+              {dateFrom && dateTo && ` (Comparé à la période précédente)`}
             </p>
           </div>
           <div style={{ display: "flex", gap: "12px" }}>
@@ -688,7 +770,7 @@ export function DashboardPage() {
           </div>
         </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "16px", alignItems: "flex-end" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "16px", alignItems: "flex-end" }}>
           <div className="field" style={{ marginBottom: 0 }}>
             <label className="label" htmlFor="dashboard-campaign">
               <Filter size={14} style={{ marginRight: 6 }} />
@@ -699,6 +781,19 @@ export function DashboardPage() {
               {campaigns.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
             </select>
           </div>
+
+          {viewMode === 'TEAM' && (user?.role === 'ADMIN' || user?.role === 'SUPERVISEUR') && (
+            <div className="field" style={{ marginBottom: 0 }}>
+              <label className="label" htmlFor="dashboard-user">
+                <Users size={14} style={{ marginRight: 6 }} />
+                Conseiller
+              </label>
+              <select id="dashboard-user" className="select" value={pendingUserId} onChange={(e) => setPendingUserId(e.target.value)}>
+                <option value="">Tous les conseillers</option>
+                {users.map((u) => <option key={u.id} value={u.id}>{u.name || u.email}</option>)}
+              </select>
+            </div>
+          )}
 
           <div className="field" style={{ marginBottom: 0 }}>
             <label className="label" htmlFor="date-from">
@@ -726,29 +821,84 @@ export function DashboardPage() {
       <div className="grid4" style={{ marginBottom: "24px" }}>
         <div className="stat-card">
           <div className="stat-label">Appels reçus</div>
-          <div className="stat-value">{stats.incoming}</div>
+          <div style={{ display: "flex", alignItems: "center" }}>
+            <div className="stat-value">{stats.incoming}</div>
+            {(() => {
+              const trend = getTrend(stats.incoming, prevStats.incoming);
+              if (!trend) return null;
+              const Icon = trend.isUp ? ArrowUpRight : ArrowDownRight;
+              return (
+                <span className={`trend ${trend.isUp ? 'trend-up' : 'trend-down'}`}>
+                  <Icon size={14} />
+                  {trend.value}%
+                </span>
+              );
+            })()}
+          </div>
           <div style={{ fontSize: "12px", color: "var(--primary)" }}>Entrants</div>
         </div>
         <div className="stat-card">
           <div className="stat-label">Appels émis</div>
-          <div className="stat-value" style={{ color: "var(--primary)" }}>{stats.outgoing}</div>
+          <div style={{ display: "flex", alignItems: "center" }}>
+            <div className="stat-value" style={{ color: "var(--primary)" }}>{stats.outgoing}</div>
+            {(() => {
+              const trend = getTrend(stats.outgoing, prevStats.outgoing);
+              if (!trend) return null;
+              const Icon = trend.isUp ? ArrowUpRight : ArrowDownRight;
+              return (
+                <span className={`trend ${trend.isUp ? 'trend-up' : 'trend-down'}`}>
+                  <Icon size={14} />
+                  {trend.value}%
+                </span>
+              );
+            })()}
+          </div>
           <div style={{ fontSize: "12px", color: "var(--text-muted)" }}>Sortants</div>
         </div>
         <div className="stat-card">
           <div className="stat-label">Taux de Conversion</div>
-          <div className="stat-value" style={{ color: "var(--accent)" }}>{conversionRate}%</div>
+          <div style={{ display: "flex", alignItems: "center" }}>
+            <div className="stat-value" style={{ color: "var(--accent)" }}>{conversionRate}%</div>
+            {(() => {
+              const trend = getTrend(Number(conversionRate), Number(prevConversionRate));
+              if (!trend) return null;
+              const Icon = trend.isUp ? ArrowUpRight : ArrowDownRight;
+              return (
+                <span className={`trend ${trend.isUp ? 'trend-up' : 'trend-down'}`}>
+                  <Icon size={14} />
+                  {trend.value}%
+                </span>
+              );
+            })()}
+          </div>
           <div style={{ fontSize: "12px", color: "var(--text-muted)" }}>{stats.rdv} rendez-vous</div>
         </div>
         <div className="stat-card">
           <div className="stat-label">Qualité (Manqués)</div>
-          <div className="stat-value" style={{ color: stats.missed > 0 ? "var(--danger)" : "var(--success)" }}>
-            {stats.incoming > 0 ? (stats.missed / stats.incoming * 100).toFixed(1) : 0}%
+          <div style={{ display: "flex", alignItems: "center" }}>
+            <div className="stat-value" style={{ color: stats.missed > 0 ? "var(--danger)" : "var(--success)" }}>
+              {stats.incoming > 0 ? (stats.missed / stats.incoming * 100).toFixed(1) : 0}%
+            </div>
+            {(() => {
+              const currentQual = stats.incoming > 0 ? (stats.missed / stats.incoming * 100) : 0;
+              const prevQual = prevStats.incoming > 0 ? (prevStats.missed / prevStats.incoming * 100) : 0;
+              const trend = getTrend(currentQual, prevQual);
+              if (!trend) return null;
+              const Icon = trend.isUp ? ArrowUpRight : ArrowDownRight;
+              // Pour la qualité (taux de manqués), monter est MAUVAIS
+              return (
+                <span className={`trend ${trend.isUp ? 'trend-down' : 'trend-up'}`}>
+                  <Icon size={14} />
+                  {trend.value}%
+                </span>
+              );
+            })()}
           </div>
           <div style={{ fontSize: "12px", color: "var(--text-muted)" }}>{stats.missed} manqués</div>
         </div>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(400px, 1fr))", gap: "24px", marginBottom: "24px" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(350px, 1fr))", gap: "24px", marginBottom: "24px" }}>
         {/* Graphique 1: Activité des appels */}
         <div className="card" style={{ margin: 0 }}>
           <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "20px" }}>
@@ -765,6 +915,7 @@ export function DashboardPage() {
                   contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)', fontSize: '12px' }}
                 />
                 <Legend verticalAlign="top" height={36} iconType="circle" wrapperStyle={{ fontSize: '12px' }}/>
+                <ReferenceLine y={50} stroke="rgba(100, 116, 139, 0.5)" strokeDasharray="3 3" />
                 <Bar dataKey="recus" name="Reçus" fill="var(--primary)" radius={[4, 4, 0, 0]} />
                 <Bar dataKey="emis" name="Émis" fill="var(--accent)" radius={[4, 4, 0, 0]} />
                 <Bar dataKey="manques" name="Manqués" fill="var(--danger)" radius={[4, 4, 0, 0]} />
@@ -773,7 +924,42 @@ export function DashboardPage() {
           </div>
         </div>
 
-        {/* Graphique 2: Performance RDV */}
+        {/* Graphique 2: Répartition par Campagne (PieChart) */}
+        {viewMode === 'TEAM' && !campaignId && campaignStatsData.length > 0 && (
+          <div className="card" style={{ margin: 0 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "20px" }}>
+              <Target size={20} color="var(--primary)" />
+              <h3 style={{ margin: 0 }}>Volume par Campagne</h3>
+            </div>
+            <div style={{ width: "100%", height: "300px" }}>
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie
+                    data={campaignStatsData}
+                    cx="50%"
+                    cy="50%"
+                    innerRadius={60}
+                    outerRadius={80}
+                    paddingAngle={5}
+                    dataKey="value"
+                    label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
+                    labelLine={false}
+                  >
+                    {campaignStatsData.map((entry, index) => (
+                      <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                    ))}
+                  </Pie>
+                  <Tooltip 
+                    contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)', fontSize: '12px' }}
+                  />
+                  <Legend verticalAlign="bottom" height={36} iconType="circle" wrapperStyle={{ fontSize: '12px' }} />
+                </PieChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+        )}
+
+        {/* Graphique 3: Performance RDV */}
         <div className="card" style={{ margin: 0 }}>
           <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "20px" }}>
             <ClipboardCheck size={20} color="var(--success)" />
@@ -795,6 +981,7 @@ export function DashboardPage() {
                   contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)', fontSize: '12px' }}
                 />
                 <Legend verticalAlign="top" height={36} iconType="circle" wrapperStyle={{ fontSize: '12px' }}/>
+                <ReferenceLine y={10} label={{ value: 'Objectif', position: 'insideRight', fill: '#ef4444', fontSize: 10, fontWeight: 700 }} stroke="#ef4444" strokeDasharray="3 3" />
                 <Area type="monotone" dataKey="rdv" name="RDV Fixés" stroke="var(--success)" fillOpacity={1} fill="url(#colorRdv)" strokeWidth={3} />
               </AreaChart>
             </ResponsiveContainer>
@@ -1545,39 +1732,65 @@ export function UtilisateursPage() {
 }
 
 export function SetupPasswordPage() {
-  // Supabase Auth puts the recovery/invite token in the URL hash
-  // (#access_token=...&type=invite|recovery). The client we configured with
-  // `detectSessionInUrl: true` consumes it automatically and creates a
-  // session, so we just need to call updateUser({ password }) here.
   const navigate = useNavigate();
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [msg, setMsg] = useState("");
   const [sessionReady, setSessionReady] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [busy, run] = useAsync();
 
   useEffect(() => {
-    // We listen for the first valid session
+    let mounted = true;
+
+    async function checkSession() {
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!mounted) return;
+        
+        if (session) {
+          console.log("[SetupPassword] Session found");
+          setSessionReady(true);
+          setLoading(false);
+        } else {
+          // If no session immediately, wait a bit for SDK hash processing
+          const timeout = setTimeout(async () => {
+            const { data: { s2 } } = await supabase.auth.getSession() as any;
+            if (!mounted) return;
+            if (s2 || session) {
+              setSessionReady(true);
+            } else {
+              setMsg("Lien invalide ou expiré. Veuillez demander une nouvelle invitation.");
+            }
+            setLoading(false);
+          }, 2000);
+          return () => clearTimeout(timeout);
+        }
+      } catch (err) {
+        console.error("[SetupPassword] Error checking session:", err);
+        if (mounted) {
+          setMsg("Erreur lors de la vérification de la session.");
+          setLoading(false);
+        }
+      }
+    }
+
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       console.log("[SetupPassword] Auth event:", event, !!session);
+      if (!mounted) return;
       if (session) {
-        setMsg("");
         setSessionReady(true);
+        setLoading(false);
+        setMsg("");
       }
     });
 
-    // Check immediately too
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      if (!session) {
-        setMsg("Attente de la session... Si ce message persiste, le lien est invalide.");
-        setSessionReady(false);
-      } else {
-        setMsg("");
-        setSessionReady(true);
-      }
-    });
+    checkSession();
 
-    return () => subscription.unsubscribe();
+    return () => {
+      mounted = false;
+      subscription.unsubscribe();
+    };
   }, []);
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -1590,22 +1803,11 @@ export function SetupPasswordPage() {
     if (password !== confirm) return setMsg("Erreur : les mots de passe ne correspondent pas");
     run(async () => {
       try {
-        console.log("[SetupPassword] Updating user password...");
-        
-        // Wrap the update in a timeout to avoid hanging forever
-        const updatePromise = supabase.auth.updateUser({ password: password });
-        const timeoutPromise = new Promise((_, reject) => 
-          setTimeout(() => reject(new Error("Délai d'attente dépassé. Veuillez réessayer.")), 15000)
-        );
-
-        const { error } = await Promise.race([updatePromise, timeoutPromise]) as any;
+        const { error } = await supabase.auth.updateUser({ password: password });
         if (error) throw error;
 
-        console.log("[SetupPassword] Success!");
         setMsg("Succès ! Redirection...");
         toast.success("Mot de passe configuré");
-        
-        // Give time for AuthProvider to receive the USER_UPDATED event
         setTimeout(() => navigate("/"), 1500);
       } catch (err: any) {
         console.error("[SetupPassword] Error:", err);
@@ -1613,6 +1815,16 @@ export function SetupPasswordPage() {
       }
     });
   };
+
+  if (loading && !sessionReady) {
+    return (
+      <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "var(--background)" }}>
+        <div className="card" style={{ textAlign: "center", padding: "48px" }}>
+          <div className="muted">Vérification de votre lien...</div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "var(--background)" }}>
@@ -1636,7 +1848,7 @@ export function SetupPasswordPage() {
           <button type="submit" className="btn btn-primary" disabled={busy || !sessionReady}>
             {busy ? "Enregistrement..." : "Enregistrer et continuer"}
           </button>
-          {msg && <p className="muted" style={{ color: msg.includes("Erreur") ? "var(--danger)" : "var(--success)" }}>{msg}</p>}
+          {msg && <p className="muted" style={{ color: msg.includes("Erreur") || msg.includes("invalide") ? "var(--danger)" : "var(--success)" }}>{msg}</p>}
         </form>
       </div>
     </div>
