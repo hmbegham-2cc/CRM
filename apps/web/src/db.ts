@@ -74,6 +74,7 @@ type UserRow = {
   name: string | null;
   email: string;
   role: Role;
+  active: boolean;
   createdAt: string;
   campaignMemberships: { campaign: { name: string } }[];
 };
@@ -82,13 +83,14 @@ export async function getUsers(): Promise<UserRow[]> {
   const { data, error } = await supabase
     .from("User")
     .select(
-      `id, name, email, role, "createdAt",
+      `id, name, email, role, "active", "createdAt",
        campaignMemberships:CampaignMember(id, "endDate", campaign:Campaign(name))`,
     )
     .order("name");
   if (error) fail(error, "Impossible de charger les utilisateurs");
   return (data || []).map((u: any) => ({
     ...u,
+    active: u.active ?? true,
     campaignMemberships: (u.campaignMemberships || []).filter((m: any) => !m.endDate),
   }));
 }
@@ -240,6 +242,34 @@ export async function inviteUser(email: string, name: string, role: Role) {
     body: { email, name, role },
   });
   if (error) fail(error, "Impossible d'inviter l'utilisateur");
+  if (data?.error) throw new Error(data.error);
+  return data;
+}
+
+export async function resendInvite(userId: string) {
+  const { data, error } = await supabase.functions.invoke("admin-user-action", {
+    body: { action: "resend-invite", userId },
+  });
+  if (error) fail(error, "Impossible de renvoyer l'invitation");
+  if (data?.error) throw new Error(data.error);
+  return data;
+}
+
+export async function deleteUser(userId: string) {
+  const { data, error } = await supabase.functions.invoke("admin-user-action", {
+    body: { action: "delete-user", userId },
+  });
+  if (error) fail(error, "Impossible de supprimer l'utilisateur");
+  if (data?.error) throw new Error(data.error);
+  return data;
+}
+
+export async function setUserActive(userId: string, active: boolean) {
+  const { data, error } = await supabase.rpc("set_user_active", {
+    p_user_id: userId,
+    p_active: active,
+  });
+  if (error) fail(error, "Impossible de modifier l'état du compte");
   if (data?.error) throw new Error(data.error);
   return data;
 }

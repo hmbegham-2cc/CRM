@@ -7,8 +7,11 @@ import {
   submitReport, actionReport, getNotifications, markNotificationRead,
   markAllNotificationsRead, deleteNotification, deleteAllNotifications,
   inviteUser, forgotPassword, changePassword, setupPassword, exportReports,
+  resendInvite, deleteUser, setUserActive,
 } from "./db";
 import { useAuth } from "./auth";
+import { useAsync } from "./hooks/useAsync";
+import { ConfirmModal } from "./components/ConfirmModal";
 import { toast } from "sonner";
 import jsPDF from "jspdf";
 import html2canvas from "html2canvas";
@@ -68,6 +71,7 @@ type UserRow = {
   name: string | null;
   email: string;
   role: "TELECONSEILLER" | "SUPERVISEUR" | "ADMIN";
+  active?: boolean;
   campaignMemberships: { campaign: { name: string } }[];
 };
 
@@ -121,23 +125,43 @@ export function RapportPage() {
     });
   }, [user]);
 
+  const [busy, run] = useAsync();
+
   async function save(submit = false) {
     setMessage("");
-    try {
-      const report = await upsertReport({ date, campaignId, ...state });
-      setReportId(report.id);
-      if (submit) {
-        await submitReport(report.id);
-        toast.success("Rapport soumis avec succès !");
-      } else {
-        toast.info("Brouillon enregistré.");
-      }
-      setMessage(submit ? "Rapport soumis avec succès." : "Brouillon enregistré.");
-    } catch (err: any) {
-      const errorMsg = err.message || "Impossible d'enregistrer le rapport";
-      toast.error(errorMsg);
-      setMessage("Erreur : " + errorMsg);
+    // Client-side validation: server validates again in submit_report RPC
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const reportDate = new Date(date);
+    if (reportDate > today) {
+      const msg = "La date du rapport ne peut pas être dans le futur";
+      toast.error(msg); setMessage("Erreur : " + msg);
+      return;
     }
+    if ([state.incomingTotal, state.outgoingTotal, state.handled, state.missed,
+         state.rdvTotal, state.smsTotal].some((n) => n < 0)) {
+      const msg = "Les valeurs ne peuvent pas être négatives";
+      toast.error(msg); setMessage("Erreur : " + msg);
+      return;
+    }
+
+    await run(async () => {
+      try {
+        const report = await upsertReport({ date, campaignId, ...state });
+        setReportId(report.id);
+        if (submit) {
+          await submitReport(report.id);
+          toast.success("Rapport soumis avec succès !");
+          setMessage("Rapport soumis avec succès.");
+        } else {
+          toast.info("Brouillon enregistré.");
+          setMessage("Brouillon enregistré.");
+        }
+      } catch (err: any) {
+        const errorMsg = err.message || "Impossible d'enregistrer le rapport";
+        toast.error(errorMsg);
+        setMessage("Erreur : " + errorMsg);
+      }
+    });
   }
 
   return (
@@ -240,13 +264,13 @@ export function RapportPage() {
       </div>
 
       <div className="row" style={{ marginTop: 24, borderTop: "1px solid var(--border)", paddingTop: "24px" }}>
-        <button className="btn btn-secondary" disabled={!campaignId} onClick={() => save(false)}>
+        <button className="btn btn-secondary" disabled={!campaignId || busy} onClick={() => save(false)}>
           <Save size={18} />
-          Enregistrer brouillon
+          {busy ? "Enregistrement..." : "Enregistrer brouillon"}
         </button>
-        <button className="btn btn-primary" disabled={!campaignId} onClick={() => save(true)}>
+        <button className="btn btn-primary" disabled={!campaignId || busy} onClick={() => save(true)}>
           <Send size={18} />
-          Soumettre le rapport
+          {busy ? "Soumission..." : "Soumettre le rapport"}
         </button>
         {reportId && (
           <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8 }} className="muted">
@@ -333,15 +357,25 @@ export function ValidationPage() {
   }, [campaignId, dateFrom, dateTo]);
 
   const [rejectReasons, setRejectReasons] = useState<Record<string, string>>({});
+  const [acting, setActing] = useState<Set<string>>(new Set());
 
   async function act(id: string, action: "validate" | "reject") {
-    const body: any = { action };
-    if (action === "reject" && rejectReasons[id]) {
-      body.reason = rejectReasons[id];
+    if (acting.has(id)) return; // anti double-submit
+    if (action === "reject" && !(rejectReasons[id] || "").trim()) {
+      toast.error("Merci d'indiquer une raison de rejet");
+      return;
     }
-    await actionReport(id, action, action === "reject" ? rejectReasons[id] : undefined);
-    setReports((prev) => prev.filter((r) => r.id !== id));
-    setRejectReasons((prev) => { const next = { ...prev }; delete next[id]; return next; });
+    setActing((prev) => new Set(prev).add(id));
+    try {
+      await actionReport(id, action, action === "reject" ? rejectReasons[id] : undefined);
+      setReports((prev) => prev.filter((r) => r.id !== id));
+      setRejectReasons((prev) => { const next = { ...prev }; delete next[id]; return next; });
+      toast.success(action === "validate" ? "Rapport validé" : "Rapport rejeté");
+    } catch (err: any) {
+      toast.error(err.message || "Action impossible");
+    } finally {
+      setActing((prev) => { const next = new Set(prev); next.delete(id); return next; });
+    }
   }
 
   return (
@@ -467,13 +501,22 @@ export function ValidationPage() {
                   />
                 </div>
                 <div style={{ display: "flex", gap: "12px" }}>
-                  <button className="btn btn-primary" onClick={() => act(r.id, "validate")} style={{ background: "var(--success)" }}>
+                  <button
+                    className="btn btn-primary"
+                    onClick={() => act(r.id, "validate")}
+                    disabled={acting.has(r.id)}
+                    style={{ background: "var(--success)" }}
+                  >
                     <CheckSquare size={18} />
-                    Valider le rapport
+                    {acting.has(r.id) ? "Validation..." : "Valider le rapport"}
                   </button>
-                  <button className="btn btn-danger" onClick={() => act(r.id, "reject")}>
+                  <button
+                    className="btn btn-danger"
+                    onClick={() => act(r.id, "reject")}
+                    disabled={acting.has(r.id)}
+                  >
                     <AlertCircle size={18} />
-                    Rejeter
+                    {acting.has(r.id) ? "Rejet..." : "Rejeter"}
                   </button>
                 </div>
               </div>
@@ -909,8 +952,10 @@ export function CampagnesPage() {
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [name, setName] = useState("");
   const [loading, setLoading] = useState(true);
+  const [busy, run] = useAsync();
+  const [toDelete, setToDelete] = useState<Campaign | null>(null);
   const navigate = useNavigate();
-  
+
   const load = () => {
     setLoading(true);
     getCampaigns()
@@ -939,9 +984,22 @@ export function CampagnesPage() {
             <label className="label" htmlFor="campaign-name">Nom de la campagne</label>
             <input id="campaign-name" className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="Ex: AXA Prévoyance" />
           </div>
-          <button className="btn btn-primary" onClick={async () => { await createCampaign(name); setName(""); load(); }}>
+          <button
+            className="btn btn-primary"
+            disabled={!name.trim() || busy}
+            onClick={() => run(async () => {
+              try {
+                await createCampaign(name);
+                toast.success("Campagne créée");
+                setName("");
+                load();
+              } catch (err: any) {
+                toast.error(err.message || "Impossible de créer la campagne");
+              }
+            })}
+          >
             <Plus size={18} />
-            Créer
+            {busy ? "Création..." : "Créer"}
           </button>
         </div>
       </div>
@@ -969,12 +1027,18 @@ export function CampagnesPage() {
                 <button
                   className="btn btn-secondary"
                   style={{ flex: 1, fontSize: "13px" }}
-                  onClick={async () => {
+                  disabled={busy}
+                  onClick={() => run(async () => {
                     const nextName = prompt("Nouveau nom de campagne", c.name);
-                    if (!nextName) return;
-                    await updateCampaign(c.id, { name: nextName });
-                    load();
-                  }}
+                    if (!nextName || nextName === c.name) return;
+                    try {
+                      await updateCampaign(c.id, { name: nextName });
+                      toast.success("Campagne modifiée");
+                      load();
+                    } catch (err: any) {
+                      toast.error(err.message || "Erreur");
+                    }
+                  })}
                 >
                   Modifier
                 </button>
@@ -985,17 +1049,27 @@ export function CampagnesPage() {
                 >
                   Voir l'équipe
                 </button>
-                <button 
-                  className="btn btn-secondary" 
+                <button
+                  className="btn btn-secondary"
                   style={{ flex: 1, fontSize: "13px" }}
-                  onClick={async () => { await updateCampaign(c.id, { active: !c.active }); load(); }}
+                  disabled={busy}
+                  onClick={() => run(async () => {
+                    try {
+                      await updateCampaign(c.id, { active: !c.active });
+                      toast.success(c.active ? "Campagne désactivée" : "Campagne activée");
+                      load();
+                    } catch (err: any) {
+                      toast.error(err.message || "Erreur");
+                    }
+                  })}
                 >
                   {c.active ? "Désactiver" : "Activer"}
                 </button>
-                <button 
-                  className="btn btn-danger" 
+                <button
+                  className="btn btn-danger"
                   style={{ flex: 1, fontSize: "13px" }}
-                  onClick={async () => { if(confirm("Supprimer cette campagne ?")) { await deleteCampaign(c.id); load(); } }}
+                  disabled={busy}
+                  onClick={() => setToDelete(c)}
                 >
                   Supprimer
                 </button>
@@ -1004,6 +1078,33 @@ export function CampagnesPage() {
           ))}
         </div>
       )}
+
+      <ConfirmModal
+        open={!!toDelete}
+        title="Supprimer la campagne"
+        message={
+          <>
+            La campagne <strong>{toDelete?.name}</strong> et tous ses rapports
+            associés seront <strong>définitivement supprimés</strong>. Cette action
+            est <strong>irréversible</strong>.
+          </>
+        }
+        confirmLabel="Supprimer définitivement"
+        variant="danger"
+        busy={busy}
+        onCancel={() => setToDelete(null)}
+        onConfirm={() => run(async () => {
+          if (!toDelete) return;
+          try {
+            await deleteCampaign(toDelete.id);
+            toast.success("Campagne supprimée");
+            setToDelete(null);
+            load();
+          } catch (err: any) {
+            toast.error(err.message || "Impossible de supprimer");
+          }
+        })}
+      />
     </div>
   );
 }
@@ -1139,46 +1240,57 @@ export function EquipesPage() {
 }
 
 export function UtilisateursPage() {
+  const { user: currentUser } = useAuth();
   const [users, setUsers] = useState<UserRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [showInvite, setShowInvite] = useState(false);
   const [inviteData, setInviteData] = useState({ email: "", name: "", role: "TELECONSEILLER" as any });
-  const [inviteMsg, setInviteMsg] = useState("");
   const [searchTerm, setSearchTerm] = useState("");
+  const [busy, run] = useAsync();
+  const [toDelete, setToDelete] = useState<UserRow | null>(null);
+  const [toToggle, setToToggle] = useState<UserRow | null>(null);
 
   const load = () => {
     setLoading(true);
     getUsers()
-      .then(setUsers)
+      .then(setUsers as any)
       .finally(() => setLoading(false));
   };
-  
+
   useEffect(() => { load(); }, []);
 
   const filteredUsers = useMemo(() => {
-    return users.filter(u => 
-      (u.name?.toLowerCase() || "").includes(searchTerm.toLowerCase()) || 
+    return users.filter((u) =>
+      (u.name?.toLowerCase() || "").includes(searchTerm.toLowerCase()) ||
       u.email.toLowerCase().includes(searchTerm.toLowerCase())
     );
   }, [users, searchTerm]);
 
-  const handleInvite = async (e: React.FormEvent) => {
+  const handleInvite = (e: React.FormEvent) => {
     e.preventDefault();
-    setInviteMsg("");
-    const tId = toast.loading("Envoi de l'invitation...");
-    try {
-      await inviteUser(inviteData.email, inviteData.name, inviteData.role);
-      toast.success("Utilisateur invité avec succès !", { id: tId });
-      setInviteMsg("Invitation envoyée !");
-      setInviteData({ email: "", name: "", role: "TELECONSEILLER" });
-      setShowInvite(false);
-      load();
-    } catch (err: any) {
-      const errorMsg = err.message || "Impossible d'inviter";
-      toast.error(errorMsg, { id: tId });
-      setInviteMsg("Erreur : " + errorMsg);
-    }
+    run(async () => {
+      const tId = toast.loading("Envoi de l'invitation...");
+      try {
+        await inviteUser(inviteData.email, inviteData.name, inviteData.role);
+        toast.success("Utilisateur invité avec succès !", { id: tId });
+        setInviteData({ email: "", name: "", role: "TELECONSEILLER" });
+        setShowInvite(false);
+        load();
+      } catch (err: any) {
+        toast.error(err.message || "Impossible d'inviter", { id: tId });
+      }
+    });
   };
+
+  const handleResend = (u: UserRow) => run(async () => {
+    const tId = toast.loading("Renvoi de l'invitation...");
+    try {
+      await resendInvite(u.id);
+      toast.success(`Invitation renvoyée à ${u.email}`, { id: tId });
+    } catch (err: any) {
+      toast.error(err.message || "Impossible de renvoyer", { id: tId });
+    }
+  });
 
   return (
     <div>
@@ -1215,18 +1327,26 @@ export function UtilisateursPage() {
             </div>
           ) : (
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))", gap: "16px" }}>
-              {filteredUsers.map((u) => (
-                <div key={u.id} className="card user-card" style={{ margin: 0, padding: "20px", position: "relative" }}>
+              {filteredUsers.map((u) => {
+                const isActive = u.active !== false;
+                const isSelf = u.id === currentUser?.id;
+                return (
+                <div key={u.id} className="card user-card" style={{
+                  margin: 0, padding: "20px", position: "relative",
+                  opacity: isActive ? 1 : 0.55,
+                }}>
                   <div style={{ display: "flex", alignItems: "center", gap: "16px", marginBottom: "16px" }}>
-                    <div style={{ 
-                      width: "48px", 
-                      height: "48px", 
-                      borderRadius: "12px", 
-                      background: "linear-gradient(135deg, var(--primary) 0%, #3b82f6 100%)", 
-                      display: "flex", 
-                      alignItems: "center", 
-                      justifyContent: "center", 
-                      fontWeight: 700, 
+                    <div style={{
+                      width: "48px",
+                      height: "48px",
+                      borderRadius: "12px",
+                      background: isActive
+                        ? "linear-gradient(135deg, var(--primary) 0%, #3b82f6 100%)"
+                        : "linear-gradient(135deg, #94a3b8 0%, #64748b 100%)",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      fontWeight: 700,
                       fontSize: "18px",
                       color: "white",
                       boxShadow: "0 4px 12px rgba(37, 99, 235, 0.2)"
@@ -1234,7 +1354,12 @@ export function UtilisateursPage() {
                       {(u.name || u.email).charAt(0).toUpperCase()}
                     </div>
                     <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontWeight: 700, fontSize: "16px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{u.name ?? "Sans nom"}</div>
+                      <div style={{ fontWeight: 700, fontSize: "16px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                        {u.name ?? "Sans nom"}
+                        {!isActive && (
+                          <span className="badge" style={{ marginLeft: 8, fontSize: 10, background: "#e2e8f0", color: "#475569" }}>Désactivé</span>
+                        )}
+                      </div>
                       <div className="muted" style={{ fontSize: "13px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{u.email}</div>
                     </div>
                   </div>
@@ -1242,20 +1367,21 @@ export function UtilisateursPage() {
                   <div style={{ display: "grid", gap: "12px" }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                       <span className="muted" style={{ fontSize: "12px", fontWeight: 600 }}>RÔLE</span>
-                      <select 
-                        className="select" 
+                      <select
+                        className="select"
                         style={{ padding: "4px 8px", fontSize: "12px", width: "auto", height: "auto" }}
-                        value={u.role} 
-                        onChange={async (e) => { 
+                        value={u.role}
+                        disabled={busy || isSelf}
+                        onChange={(e) => run(async () => {
                           const tId = toast.loading("Mise à jour du rôle...");
                           try {
-                            await updateUserRole(u.id, e.target.value); 
+                            await updateUserRole(u.id, e.target.value);
                             toast.success("Rôle mis à jour", { id: tId });
-                            load(); 
+                            load();
                           } catch (err: any) {
-                            toast.error("Erreur", { id: tId });
+                            toast.error(err.message || "Erreur", { id: tId });
                           }
-                        }}
+                        })}
                       >
                         <option value="TELECONSEILLER">Téléconseiller</option>
                         <option value="SUPERVISEUR">Superviseur</option>
@@ -1277,9 +1403,42 @@ export function UtilisateursPage() {
                         )}
                       </div>
                     </div>
+
+                    <div style={{ borderTop: "1px solid #f1f5f9", paddingTop: "12px", display: "flex", flexWrap: "wrap", gap: 6 }}>
+                      <button
+                        className="btn btn-secondary"
+                        style={{ flex: 1, fontSize: 11, padding: "6px 8px", minWidth: 90 }}
+                        disabled={busy}
+                        onClick={() => handleResend(u)}
+                        title="Renvoyer un nouveau lien d'invitation par email"
+                      >
+                        Renvoyer
+                      </button>
+                      {!isSelf && (
+                        <button
+                          className="btn btn-secondary"
+                          style={{ flex: 1, fontSize: 11, padding: "6px 8px", minWidth: 90 }}
+                          disabled={busy}
+                          onClick={() => setToToggle(u)}
+                        >
+                          {isActive ? "Désactiver" : "Réactiver"}
+                        </button>
+                      )}
+                      {!isSelf && (
+                        <button
+                          className="btn btn-danger"
+                          style={{ flex: 1, fontSize: 11, padding: "6px 8px", minWidth: 90 }}
+                          disabled={busy}
+                          onClick={() => setToDelete(u)}
+                        >
+                          Supprimer
+                        </button>
+                      )}
+                    </div>
                   </div>
                 </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
@@ -1307,48 +1466,117 @@ export function UtilisateursPage() {
                   <option value="ADMIN">Administrateur</option>
                 </select>
               </div>
-              <button type="submit" className="btn btn-primary" style={{ marginTop: "8px", height: "44px" }}>
-                Envoyer l'invitation
+              <button
+                type="submit"
+                className="btn btn-primary"
+                style={{ marginTop: "8px", height: "44px" }}
+                disabled={busy}
+              >
+                {busy ? "Envoi en cours..." : "Envoyer l'invitation"}
               </button>
             </form>
           </div>
         )}
       </div>
+
+      <ConfirmModal
+        open={!!toDelete}
+        title="Supprimer l'utilisateur"
+        message={
+          <>
+            Le compte <strong>{toDelete?.email}</strong> et ses données associées
+            (rapports, notifications) seront <strong>définitivement supprimés</strong>.
+            Cette action est <strong>irréversible</strong>. Pour conserver l'historique,
+            préférez "Désactiver".
+          </>
+        }
+        confirmLabel="Supprimer définitivement"
+        variant="danger"
+        busy={busy}
+        onCancel={() => setToDelete(null)}
+        onConfirm={() => run(async () => {
+          if (!toDelete) return;
+          try {
+            await deleteUser(toDelete.id);
+            toast.success("Utilisateur supprimé");
+            setToDelete(null);
+            load();
+          } catch (err: any) {
+            toast.error(err.message || "Impossible de supprimer");
+          }
+        })}
+      />
+
+      <ConfirmModal
+        open={!!toToggle}
+        title={toToggle?.active === false ? "Réactiver le compte" : "Désactiver le compte"}
+        message={
+          toToggle?.active === false ? (
+            <>
+              Réactiver <strong>{toToggle?.email}</strong> ? L'utilisateur pourra à
+              nouveau se connecter et travailler.
+            </>
+          ) : (
+            <>
+              Désactiver <strong>{toToggle?.email}</strong> ? L'utilisateur ne pourra
+              plus se connecter, mais ses données (rapports, historique) seront
+              conservées.
+            </>
+          )
+        }
+        confirmLabel={toToggle?.active === false ? "Réactiver" : "Désactiver"}
+        variant={toToggle?.active === false ? "primary" : "danger"}
+        busy={busy}
+        onCancel={() => setToToggle(null)}
+        onConfirm={() => run(async () => {
+          if (!toToggle) return;
+          try {
+            await setUserActive(toToggle.id, toToggle.active === false);
+            toast.success(toToggle.active === false ? "Compte réactivé" : "Compte désactivé");
+            setToToggle(null);
+            load();
+          } catch (err: any) {
+            toast.error(err.message || "Impossible de modifier l'état");
+          }
+        })}
+      />
     </div>
   );
 }
 
 export function SetupPasswordPage() {
-  const [params] = useSearchParams();
+  // Supabase Auth puts the recovery/invite token in the URL hash
+  // (#access_token=...&type=invite|recovery). The client we configured with
+  // `detectSessionInUrl: true` consumes it automatically and creates a
+  // session, so we just need to call updateUser({ password }) here.
   const navigate = useNavigate();
-  const token = params.get("token");
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [msg, setMsg] = useState("");
-  const [loading, setLoading] = useState(false);
+  const [busy, run] = useAsync();
 
-  if (!token) return <Navigate to="/login" />;
-
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (password !== confirm) return setMsg("Les mots de passe ne correspondent pas");
-    setLoading(true);
-    try {
-      await setupPassword(password);
-      setMsg("Succès ! Redirection vers la connexion...");
-      setTimeout(() => navigate("/login"), 2000);
-    } catch (err: any) {
-      setMsg("Erreur : " + (err.message || "Impossible de configurer le mot de passe"));
-    } finally {
-      setLoading(false);
-    }
+    setMsg("");
+    if (password.length < 8) return setMsg("Erreur : 8 caractères minimum");
+    if (password !== confirm) return setMsg("Erreur : les mots de passe ne correspondent pas");
+    run(async () => {
+      try {
+        await setupPassword(password);
+        setMsg("Succès ! Redirection...");
+        toast.success("Mot de passe configuré");
+        setTimeout(() => navigate("/"), 1200);
+      } catch (err: any) {
+        setMsg("Erreur : " + (err.message || "Lien expiré ou invalide"));
+      }
+    });
   };
 
   return (
     <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "var(--background)" }}>
       <div className="card" style={{ maxWidth: 400, width: "100%" }}>
         <h2>Configurer votre compte</h2>
-        <p className="muted">Veuillez choisir votre mot de passe pour finaliser votre inscription.</p>
+        <p className="muted">Choisissez votre mot de passe pour finaliser votre inscription.</p>
         <form onSubmit={handleSubmit} style={{ marginTop: "24px", display: "grid", gap: "16px" }}>
           <div className="field">
             <label className="label">Nouveau mot de passe</label>
@@ -1358,8 +1586,8 @@ export function SetupPasswordPage() {
             <label className="label">Confirmer le mot de passe</label>
             <input className="input" type="password" value={confirm} onChange={e => setConfirm(e.target.value)} required />
           </div>
-          <button type="submit" className="btn btn-primary" disabled={loading}>
-            {loading ? "Chargement..." : "Enregistrer et continuer"}
+          <button type="submit" className="btn btn-primary" disabled={busy}>
+            {busy ? "Enregistrement..." : "Enregistrer et continuer"}
           </button>
           {msg && <p className="muted" style={{ color: msg.includes("Erreur") ? "var(--danger)" : "var(--success)" }}>{msg}</p>}
         </form>
@@ -1380,6 +1608,8 @@ type NotificationRow = {
 export function NotificationsPage() {
   const [notifications, setNotifications] = useState<NotificationRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [busy, run] = useAsync();
+  const [confirmClearAll, setConfirmClearAll] = useState(false);
 
   const load = () => {
     setLoading(true);
@@ -1390,28 +1620,45 @@ export function NotificationsPage() {
 
   useEffect(() => { load(); }, []);
 
-  const markAsRead = async (id: string) => {
-    await markNotificationRead(id);
-    setNotifications((prev) => prev.map(n => n.id === id ? { ...n, read: true } : n));
-  };
+  const markAsRead = (id: string) => run(async () => {
+    try {
+      await markNotificationRead(id);
+      setNotifications((prev) => prev.map((n) => (n.id === id ? { ...n, read: true } : n)));
+    } catch (err: any) {
+      toast.error(err.message || "Erreur");
+    }
+  });
 
-  const markAllRead = async () => {
-    await markAllNotificationsRead();
-    setNotifications((prev) => prev.map(n => ({ ...n, read: true })));
-    toast.success("Toutes les notifications marquées comme lues");
-  };
+  const markAllRead = () => run(async () => {
+    try {
+      await markAllNotificationsRead();
+      setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
+      toast.success("Toutes les notifications marquées comme lues");
+    } catch (err: any) {
+      toast.error(err.message || "Erreur");
+    }
+  });
 
-  const handleDeleteNotification = async (id: string) => {
-    await deleteNotification(id);
-    setNotifications((prev) => prev.filter(n => n.id !== id));
-    toast.success("Notification supprimée");
-  };
+  const handleDeleteNotification = (id: string) => run(async () => {
+    try {
+      await deleteNotification(id);
+      setNotifications((prev) => prev.filter((n) => n.id !== id));
+      toast.success("Notification supprimée");
+    } catch (err: any) {
+      toast.error(err.message || "Erreur");
+    }
+  });
 
-  const clearAll = async () => {
-    await deleteAllNotifications();
-    setNotifications([]);
-    toast.success("Toutes les notifications ont été effacées");
-  };
+  const clearAll = () => run(async () => {
+    try {
+      await deleteAllNotifications();
+      setNotifications([]);
+      setConfirmClearAll(false);
+      toast.success("Toutes les notifications ont été effacées");
+    } catch (err: any) {
+      toast.error(err.message || "Erreur");
+    }
+  });
 
   const getTypeIcon = (type: string) => {
     switch (type) {
@@ -1455,7 +1702,11 @@ export function NotificationsPage() {
               Tout marquer comme lu
             </button>
           )}
-          <button className="btn btn-secondary" onClick={clearAll} disabled={notifications.length === 0}>
+          <button
+            className="btn btn-secondary"
+            onClick={() => setConfirmClearAll(true)}
+            disabled={notifications.length === 0 || busy}
+          >
             <Trash2 size={16} />
             Tout effacer
           </button>
@@ -1537,6 +1788,17 @@ export function NotificationsPage() {
           )}
         </div>
       )}
+
+      <ConfirmModal
+        open={confirmClearAll}
+        title="Effacer toutes les notifications"
+        message="Toutes vos notifications seront définitivement supprimées. Cette action est irréversible."
+        confirmLabel="Tout effacer"
+        variant="danger"
+        busy={busy}
+        onCancel={() => setConfirmClearAll(false)}
+        onConfirm={clearAll}
+      />
     </div>
   );
 }

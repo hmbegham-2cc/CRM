@@ -2,19 +2,19 @@ import { Link, Outlet, useLocation } from "react-router-dom";
 import { useState, useEffect } from "react";
 import { useAuth } from "./auth";
 import { supabase } from "./supabase";
-import { 
-  LayoutDashboard, 
-  FileEdit, 
-  History, 
-  CheckCircle, 
-  Settings, 
-  Users, 
-  Database, 
-  Download, 
+import { OfflineBanner } from "./components/OfflineBanner";
+import {
+  LayoutDashboard,
+  FileEdit,
+  History,
+  CheckCircle,
+  Settings,
+  Users,
+  Database,
+  Download,
   LogOut,
-  Menu,
   Bell,
-  Key
+  Key,
 } from "lucide-react";
 
 export function AppLayout() {
@@ -107,6 +107,7 @@ export function AppLayout() {
       </aside>
 
       <main className="content">
+        <OfflineBanner />
         <Outlet />
       </main>
     </div>

@@ -15,6 +15,9 @@ CREATE EXTENSION IF NOT EXISTS pgcrypto;
 ALTER TABLE public."User" DROP COLUMN IF EXISTS "password";
 ALTER TABLE public."User" DROP COLUMN IF EXISTS "setupToken";
 
+-- Add `active` boolean: lets admins disable accounts without losing history.
+ALTER TABLE public."User" ADD COLUMN IF NOT EXISTS "active" BOOLEAN NOT NULL DEFAULT TRUE;
+
 -- Remove the legacy seed admin (by email so it works at any state)
 DELETE FROM public."User" WHERE email = 'admin@2cconseil.com';
 
@@ -374,7 +377,7 @@ END;
 $$;
 
 -- ============================================================
--- 11. RPC: submit a report (owner only)
+-- 11. RPC: submit a report (owner only) — with input validation
 -- ============================================================
 CREATE OR REPLACE FUNCTION public.submit_report(p_report_id TEXT)
 RETURNS JSONB
@@ -383,22 +386,77 @@ SECURITY DEFINER
 SET search_path = public, pg_temp
 AS $$
 DECLARE
-  v_count INT;
+  v_report public."DailyReport"%ROWTYPE;
 BEGIN
+  SELECT * INTO v_report
+  FROM public."DailyReport"
+  WHERE id = p_report_id AND "userId" = auth.uid();
+
+  IF NOT FOUND THEN
+    RETURN jsonb_build_object('error', 'Rapport introuvable ou action non autorisée');
+  END IF;
+
+  -- Sanity checks: numbers must be >= 0 and date can't be in the future
+  IF v_report."incomingTotal" < 0
+     OR v_report."outgoingTotal" < 0
+     OR v_report."handled" < 0
+     OR v_report."missed" < 0
+     OR v_report."rdvTotal" < 0
+     OR v_report."smsTotal" < 0 THEN
+    RETURN jsonb_build_object('error', 'Les valeurs ne peuvent pas être négatives');
+  END IF;
+
+  IF v_report.date > CURRENT_DATE THEN
+    RETURN jsonb_build_object('error', 'La date du rapport ne peut pas être dans le futur');
+  END IF;
+
+  -- Forbid resubmitting an already validated report
+  IF v_report.status = 'VALIDATED' THEN
+    RETURN jsonb_build_object('error', 'Ce rapport est déjà validé');
+  END IF;
+
   UPDATE public."DailyReport"
      SET status        = 'SUBMITTED',
          "submittedAt" = now()
-   WHERE id = p_report_id
-     AND "userId" = auth.uid();
-
-  GET DIAGNOSTICS v_count = ROW_COUNT;
-  IF v_count = 0 THEN
-    RETURN jsonb_build_object('error', 'Rapport introuvable ou action non autorisée');
-  END IF;
+   WHERE id = p_report_id;
 
   RETURN jsonb_build_object('ok', true);
 END;
 $$;
+
+-- ============================================================
+-- 11b. RPC: set user active flag (admin only)
+-- ============================================================
+CREATE OR REPLACE FUNCTION public.set_user_active(p_user_id UUID, p_active BOOLEAN)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_admin_count INT;
+BEGIN
+  IF public.current_user_role() <> 'ADMIN' THEN
+    RETURN jsonb_build_object('error', 'Accès refusé : admin uniquement');
+  END IF;
+
+  -- Don't allow disabling the last admin
+  IF p_active = FALSE THEN
+    SELECT COUNT(*) INTO v_admin_count
+    FROM public."User"
+    WHERE role = 'ADMIN' AND "active" = TRUE AND id <> p_user_id;
+    IF v_admin_count = 0 AND (
+      SELECT role FROM public."User" WHERE id = p_user_id
+    ) = 'ADMIN' THEN
+      RETURN jsonb_build_object('error', 'Impossible de désactiver le dernier administrateur');
+    END IF;
+  END IF;
+
+  UPDATE public."User" SET "active" = p_active WHERE id = p_user_id;
+  RETURN jsonb_build_object('ok', true);
+END;
+$$;
+GRANT EXECUTE ON FUNCTION public.set_user_active(UUID, BOOLEAN) TO authenticated;
 
 -- ============================================================
 -- 12. RPC: assign team to campaign
