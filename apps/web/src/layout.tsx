@@ -54,7 +54,9 @@ export function AppLayout() {
   return (
     <div className="layout">
       <aside className="sidebar">
-        <div className="brand">CRC Reporting</div>
+        <div className="brand">
+          <img src="/logo.png" alt="2C Conseil" style={{ maxWidth: '100%', height: 'auto', display: 'block' }} />
+        </div>
         
         <nav style={{ flex: 1 }}>
           {filteredMenu.map((item) => {

@@ -88,10 +88,10 @@ type ReportFormState = {
 export function HomePage() {
   return (
     <div className="card" style={{ textAlign: "center", padding: "48px 24px" }}>
-      <div style={{ background: "rgba(37, 99, 235, 0.1)", width: "64px", height: "64px", borderRadius: "16px", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 24px" }}>
-        <LayoutDashboard size={32} color="var(--primary)" />
+      <div style={{ width: "180px", margin: "0 auto 24px" }}>
+        <img src="/logo.png" alt="2C Conseil" style={{ maxWidth: '100%', height: 'auto' }} />
       </div>
-      <h1>Bienvenue sur CRC Reporting</h1>
+      <h1>Bienvenue sur votre portail</h1>
       <p className="muted" style={{ maxWidth: "500px", margin: "0 auto" }}>
         Plateforme de reporting pour le télésecrétariat. Suivez vos indicateurs et gérez vos campagnes en temps réel.
       </p>
@@ -1617,8 +1617,13 @@ export function SetupPasswordPage() {
   return (
     <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "var(--background)" }}>
       <div className="card" style={{ maxWidth: 400, width: "100%" }}>
-        <h2>Configurer votre compte</h2>
-        <p className="muted">Choisissez votre mot de passe pour finaliser votre inscription.</p>
+        <div style={{ textAlign: "center", marginBottom: "24px" }}>
+          <div style={{ width: "180px", margin: "0 auto 16px" }}>
+            <img src="/logo.png" alt="2C Conseil" style={{ maxWidth: '100%', height: 'auto' }} />
+          </div>
+          <h2>Configurer votre compte</h2>
+          <p className="muted">Choisissez votre mot de passe pour finaliser votre inscription.</p>
+        </div>
         <form onSubmit={handleSubmit} style={{ marginTop: "24px", display: "grid", gap: "16px" }}>
           <div className="field">
             <label className="label">Nouveau mot de passe</label>
@@ -1868,8 +1873,8 @@ export function ForgotPasswordPage() {
     <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "linear-gradient(135deg, #1e293b 0%, #0f172a 100%)", padding: "20px" }}>
       <div style={{ maxWidth: 400, width: "100%" }} className="card">
         <div style={{ textAlign: "center", marginBottom: "32px" }}>
-          <div style={{ width: "56px", height: "56px", background: "rgba(37, 99, 235, 0.1)", borderRadius: "14px", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px" }}>
-            <TrendingUp size={30} color="var(--primary)" />
+          <div style={{ width: "200px", margin: "0 auto 16px" }}>
+            <img src="/logo.png" alt="2C Conseil" style={{ maxWidth: '100%', height: 'auto' }} />
           </div>
           <h2 style={{ marginBottom: "8px" }}>Mot de passe oublié</h2>
           <p className="muted">Entrez votre email pour recevoir un lien de réinitialisation</p>
@@ -2120,18 +2125,11 @@ export function LoginPage() {
       <div style={{ maxWidth: 400, width: "100%" }} className="card">
         <div style={{ textAlign: "center", marginBottom: "32px" }}>
           <div style={{ 
-            width: "56px", 
-            height: "56px", 
-            background: "rgba(37, 99, 235, 0.1)", 
-            borderRadius: "14px", 
-            display: "flex", 
-            alignItems: "center", 
-            justifyContent: "center",
+            width: "220px", 
             margin: "0 auto 16px"
           }}>
-            <TrendingUp size={30} color="var(--primary)" />
+            <img src="/logo.png" alt="2C Conseil" style={{ maxWidth: '100%', height: 'auto' }} />
           </div>
-          <h2 style={{ marginBottom: "8px" }}>CRC Reporting</h2>
           <p className="muted">Connectez-vous pour accéder au portail</p>
         </div>
 
