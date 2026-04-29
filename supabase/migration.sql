@@ -560,7 +560,19 @@ GRANT EXECUTE ON FUNCTION public.assign_team(TEXT, UUID[])             TO authen
 GRANT EXECUTE ON FUNCTION public.check_missing_reports(DATE)           TO authenticated, service_role;
 
 -- ============================================================
--- 15. (Optional) pg_cron scheduling
+-- 15. Indexes for performance
+-- ============================================================
+CREATE INDEX IF NOT EXISTS "idx_User_email" ON public."User"("email");
+CREATE INDEX IF NOT EXISTS "idx_CampaignMember_userId" ON public."CampaignMember"("userId");
+CREATE INDEX IF NOT EXISTS "idx_CampaignMember_campaignId" ON public."CampaignMember"("campaignId");
+CREATE INDEX IF NOT EXISTS "idx_DailyReport_userId" ON public."DailyReport"("userId");
+CREATE INDEX IF NOT EXISTS "idx_DailyReport_campaignId" ON public."DailyReport"("campaignId");
+CREATE INDEX IF NOT EXISTS "idx_DailyReport_date" ON public."DailyReport"("date");
+CREATE INDEX IF NOT EXISTS "idx_Notification_userId" ON public."Notification"("userId");
+CREATE INDEX IF NOT EXISTS "idx_Notification_createdAt" ON public."Notification"("createdAt");
+
+-- ============================================================
+-- 16. (Optional) pg_cron scheduling
 -- Enable pg_cron in Dashboard → Database → Extensions, then run:
 --
 -- SELECT cron.schedule(
