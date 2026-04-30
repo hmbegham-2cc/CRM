@@ -1220,7 +1220,7 @@ export function AllReportsPage() {
 
   return (
     <div>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "24px" }}>
+      <div className="page-header">
         <div>
           <h1>Tous les rapports</h1>
           <p className="muted">Vue détaillée de tous les rapports saisis</p>
@@ -1228,7 +1228,7 @@ export function AllReportsPage() {
       </div>
 
       <div className="card" style={{ marginBottom: "24px" }}>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "16px", alignItems: "flex-end" }}>
+        <div className="responsive-filters">
           <div className="field" style={{ marginBottom: 0 }}>
             <label className="label">Campagne</label>
             <select className="select" value={campaignId} onChange={(e) => setCampaignId(e.target.value)}>
@@ -1978,6 +1978,7 @@ export function UtilisateursPage() {
   const [busy, run] = useAsync();
   const [toDelete, setToDelete] = useState<UserRow | null>(null);
   const [toToggle, setToToggle] = useState<UserRow | null>(null);
+  const [displayMode, setDisplayMode] = useState<"CARDS" | "LIST">("CARDS");
 
   const load = () => {
     setLoading(true);
@@ -2028,30 +2029,49 @@ export function UtilisateursPage() {
 
   return (
     <div>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "24px" }}>
+      <div className="page-header">
         <div>
           <h1>Utilisateurs</h1>
           <p className="muted">Gérez vos équipes et invitez de nouveaux collaborateurs</p>
         </div>
-        <button className="btn btn-primary" onClick={() => setShowInvite(!showInvite)}>
-          {showInvite ? <Plus size={18} style={{ transform: 'rotate(45deg)' }} /> : <UserPlus size={18} />}
-          {showInvite ? "Annuler" : "Nouvel utilisateur"}
-        </button>
+        <div className="page-header-actions">
+          <button className="btn btn-primary" onClick={() => setShowInvite(!showInvite)}>
+            {showInvite ? <Plus size={18} style={{ transform: 'rotate(45deg)' }} /> : <UserPlus size={18} />}
+            {showInvite ? "Annuler" : "Nouvel utilisateur"}
+          </button>
+        </div>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: showInvite ? "1fr 350px" : "1fr", gap: "24px", alignItems: "start" }}>
-        <div style={{ display: "grid", gap: "20px" }}>
+      <div className={`users-layout ${showInvite ? "with-invite" : ""}`}>
+        <div className="users-shell">
           {/* Barre de recherche */}
           <div className="card" style={{ marginBottom: 0, padding: "12px 20px" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
-              <Search size={18} className="muted" />
-              <input 
-                type="text" 
-                placeholder="Rechercher un utilisateur (nom, email...)" 
-                style={{ border: "none", outline: "none", width: "100%", fontSize: "15px", background: "transparent" }}
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-              />
+            <div className="users-toolbar">
+              <div className="users-search">
+                <Search size={18} className="muted" />
+                <input
+                  type="text"
+                  placeholder="Rechercher un utilisateur (nom, email...)"
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                />
+              </div>
+              <div className="view-switch" aria-label="Mode d'affichage des utilisateurs">
+                <button
+                  type="button"
+                  className={`btn ${displayMode === "CARDS" ? "btn-primary" : "btn-secondary"}`}
+                  onClick={() => setDisplayMode("CARDS")}
+                >
+                  Cartes
+                </button>
+                <button
+                  type="button"
+                  className={`btn ${displayMode === "LIST" ? "btn-primary" : "btn-secondary"}`}
+                  onClick={() => setDisplayMode("LIST")}
+                >
+                  Liste
+                </button>
+              </div>
             </div>
           </div>
 
@@ -2059,8 +2079,141 @@ export function UtilisateursPage() {
             <div className="card" style={{ textAlign: "center", padding: "48px" }}>
               <div className="muted">Chargement des utilisateurs...</div>
             </div>
+          ) : displayMode === "LIST" ? (
+            <div className="card users-list-card">
+              <div className="table-scroll">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Utilisateur</th>
+                      <th>Rôle</th>
+                      <th>Campagnes</th>
+                      <th>Statut</th>
+                      <th>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredUsers.length === 0 ? (
+                      <tr>
+                        <td colSpan={5} style={{ textAlign: "center", padding: "40px", color: "var(--text-muted)" }}>
+                          Aucun utilisateur trouvé
+                        </td>
+                      </tr>
+                    ) : (
+                      filteredUsers.map((u) => {
+                        const isActive = u.active !== false;
+                        const isSelf = u.id === currentUser?.id;
+                        return (
+                          <tr key={u.id} style={{ opacity: isActive ? 1 : 0.55 }}>
+                            <td>
+                              <div className="user-identity">
+                                <div className={`user-avatar ${isActive ? "" : "inactive"}`}>
+                                  {(u.name || u.email).charAt(0).toUpperCase()}
+                                </div>
+                                <div style={{ minWidth: 0 }}>
+                                  <div style={{ fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                                    {u.name ?? "Sans nom"}
+                                  </div>
+                                  <div className="muted" style={{ fontSize: 12, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                                    {u.email}
+                                  </div>
+                                </div>
+                              </div>
+                            </td>
+                            <td>
+                              <select
+                                className="select"
+                                style={{ padding: "6px 8px", fontSize: 12, minWidth: 150 }}
+                                value={u.role}
+                                disabled={busy || isSelf}
+                                onChange={(e) => run(async () => {
+                                  const tId = toast.loading("Mise à jour du rôle...");
+                                  try {
+                                    await updateUserRole(u.id, e.target.value as Role);
+                                    toast.success("Rôle mis à jour", { id: tId });
+                                    load();
+                                  } catch (err: any) {
+                                    toast.error(err.message || "Erreur", { id: tId });
+                                  }
+                                })}
+                              >
+                                <option value="TELECONSEILLER">Téléconseiller</option>
+                                <option value="SUPERVISEUR">Superviseur</option>
+                                <option value="ADMIN">Administrateur</option>
+                              </select>
+                            </td>
+                            <td>
+                              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                                {u.campaignMemberships.length > 0 ? (
+                                  u.campaignMemberships.slice(0, 3).map((c) => (
+                                    <span key={c.campaign.name} className="badge badge-validated" style={{ fontSize: 10, padding: "2px 8px" }}>
+                                      {c.campaign.name}
+                                    </span>
+                                  ))
+                                ) : (
+                                  <span className="muted" style={{ fontSize: 12 }}>Aucune</span>
+                                )}
+                                {u.campaignMemberships.length > 3 && (
+                                  <span className="badge badge-draft" style={{ fontSize: 10, padding: "2px 8px" }}>
+                                    +{u.campaignMemberships.length - 3}
+                                  </span>
+                                )}
+                              </div>
+                            </td>
+                            <td>
+                              <span className={`badge ${isActive ? "badge-validated" : "badge-draft"}`}>
+                                {isActive ? "Actif" : "Désactivé"}
+                              </span>
+                            </td>
+                            <td>
+                              <div className="user-list-actions">
+                                <button
+                                  className="btn btn-secondary"
+                                  style={{ fontSize: 11, padding: "6px 8px" }}
+                                  onClick={() => navigate(`/equipes?userId=${u.id}`)}
+                                >
+                                  Campagnes
+                                </button>
+                                <button
+                                  className="btn btn-secondary"
+                                  style={{ fontSize: 11, padding: "6px 8px" }}
+                                  disabled={busy}
+                                  onClick={() => handleResend(u)}
+                                >
+                                  Renvoyer
+                                </button>
+                                {!isSelf && (
+                                  <button
+                                    className="btn btn-secondary"
+                                    style={{ fontSize: 11, padding: "6px 8px" }}
+                                    disabled={busy}
+                                    onClick={() => setToToggle(u)}
+                                  >
+                                    {isActive ? "Désactiver" : "Réactiver"}
+                                  </button>
+                                )}
+                                {!isSelf && (
+                                  <button
+                                    className="btn btn-danger"
+                                    style={{ fontSize: 11, padding: "6px 8px" }}
+                                    disabled={busy}
+                                    onClick={() => setToDelete(u)}
+                                  >
+                                    Supprimer
+                                  </button>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
           ) : (
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))", gap: "16px" }}>
+            <div className="users-grid">
               {filteredUsers.map((u) => {
                 const isActive = u.active !== false;
                 const isSelf = u.id === currentUser?.id;
@@ -2890,52 +3043,54 @@ function getStatusBadgeClass(status: string) {
 
 function ReportsTable({ title, reports }: { title: string; reports: DailyReport[] }) {
   return (
-    <div className="card" style={{ overflowX: "auto" }}>
+    <div className="card table-card">
       <h2 style={{ marginBottom: "20px" }}>{title}</h2>
-      <table>
-        <thead>
-          <tr>
-            <th>Date</th>
-            <th>Campagne</th>
-            <th>Conseiller</th>
-            <th>Reçus</th>
-            <th>Émis</th>
-            <th>Traités</th>
-            <th>Manqués</th>
-            <th>RDV</th>
-            <th>SMS</th>
-            <th>Statut</th>
-          </tr>
-        </thead>
-        <tbody>
-          {reports.length === 0 ? (
+      <div className="table-scroll">
+        <table>
+          <thead>
             <tr>
-              <td colSpan={10} style={{ textAlign: "center", padding: "40px", color: "var(--text-muted)" }}>
-                Aucun rapport trouvé
-              </td>
+              <th>Date</th>
+              <th>Campagne</th>
+              <th>Conseiller</th>
+              <th>Reçus</th>
+              <th>Émis</th>
+              <th>Traités</th>
+              <th>Manqués</th>
+              <th>RDV</th>
+              <th>SMS</th>
+              <th>Statut</th>
             </tr>
-          ) : (
-            reports.map((r) => (
-              <tr key={r.id}>
-                <td style={{ fontWeight: 600 }}>{new Date(r.date).toLocaleDateString("fr-FR")}</td>
-                <td>{r.campaign.name}</td>
-                <td>{r.user.name ?? r.user.email}</td>
-                <td>{r.incomingTotal}</td>
-                <td>{r.outgoingTotal}</td>
-                <td>{r.handled}</td>
-                <td style={{ color: r.missed > 0 ? "var(--danger)" : "inherit" }}>{r.missed}</td>
-                <td>{r.rdvTotal}</td>
-                <td>{r.smsTotal}</td>
-                <td>
-                  <span className={`badge ${getStatusBadgeClass(r.status)}`}>
-                    {r.status}
-                  </span>
+          </thead>
+          <tbody>
+            {reports.length === 0 ? (
+              <tr>
+                <td colSpan={10} style={{ textAlign: "center", padding: "40px", color: "var(--text-muted)" }}>
+                  Aucun rapport trouvé
                 </td>
               </tr>
-            ))
-          )}
-        </tbody>
-      </table>
+            ) : (
+              reports.map((r) => (
+                <tr key={r.id}>
+                  <td style={{ fontWeight: 600 }}>{new Date(r.date).toLocaleDateString("fr-FR")}</td>
+                  <td>{r.campaign.name}</td>
+                  <td>{r.user.name ?? r.user.email}</td>
+                  <td>{r.incomingTotal}</td>
+                  <td>{r.outgoingTotal}</td>
+                  <td>{r.handled}</td>
+                  <td style={{ color: r.missed > 0 ? "var(--danger)" : "inherit" }}>{r.missed}</td>
+                  <td>{r.rdvTotal}</td>
+                  <td>{r.smsTotal}</td>
+                  <td>
+                    <span className={`badge ${getStatusBadgeClass(r.status)}`}>
+                      {r.status}
+                    </span>
+                  </td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
