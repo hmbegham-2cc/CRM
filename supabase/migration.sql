@@ -141,6 +141,27 @@ ALTER TABLE public."DailyReport"
   ALTER COLUMN "createdAt" SET DEFAULT now(),
   ALTER COLUMN "updatedAt" SET DEFAULT now();
 
+-- Ensure Notification fields are generated when RPCs omit them.
+DO $$
+DECLARE v_notification_id_type text;
+BEGIN
+  SELECT data_type INTO v_notification_id_type
+  FROM information_schema.columns
+  WHERE table_schema = 'public'
+    AND table_name = 'Notification'
+    AND column_name = 'id';
+
+  IF v_notification_id_type = 'uuid' THEN
+    ALTER TABLE public."Notification" ALTER COLUMN id SET DEFAULT gen_random_uuid();
+  ELSE
+    ALTER TABLE public."Notification" ALTER COLUMN id SET DEFAULT gen_random_uuid()::text;
+  END IF;
+END $$;
+
+ALTER TABLE public."Notification"
+  ALTER COLUMN "createdAt" SET DEFAULT now(),
+  ALTER COLUMN read SET DEFAULT false;
+
 -- ============================================================
 -- 4. Enable RLS on all tables
 -- ============================================================
@@ -360,6 +381,23 @@ BEGIN
     now()
   )
   ON CONFLICT (id) DO NOTHING;
+
+  INSERT INTO public."Notification" ("userId", title, message, type, read, "createdAt")
+  SELECT
+    NEW.id,
+    'Bienvenue sur CRC Reporting',
+    'Bienvenue ' || COALESCE(NULLIF(trim(NEW.raw_user_meta_data->>'name'), ''), split_part(NEW.email, '@', 1)) ||
+      ' ! Votre espace est prêt.',
+    'info',
+    false,
+    now()
+  WHERE NOT EXISTS (
+    SELECT 1
+      FROM public."Notification"
+     WHERE "userId" = NEW.id
+       AND title = 'Bienvenue sur CRC Reporting'
+  );
+
   RETURN NEW;
 END;
 $$;
@@ -428,6 +466,22 @@ BEGIN
     now(),
     true,
     null
+  );
+
+  INSERT INTO public."Notification" ("userId", title, message, type, read, "createdAt")
+  SELECT
+    u.id,
+    'Bienvenue sur CRC Reporting',
+    'Bienvenue ' || COALESCE(NULLIF(trim(u.raw_user_meta_data->>'name'), ''), split_part(u.email, '@', 1)) ||
+      ' ! Votre espace est prêt.',
+    'info',
+    false,
+    now()
+  WHERE NOT EXISTS (
+    SELECT 1
+      FROM public."Notification"
+     WHERE "userId" = u.id
+       AND title = 'Bienvenue sur CRC Reporting'
   );
 EXCEPTION
   WHEN unique_violation THEN
@@ -533,22 +587,26 @@ BEGIN
    WHERE id = p_report_id;
 
   IF p_action = 'validate' THEN
-    INSERT INTO public."Notification" ("userId", title, message, type)
+    INSERT INTO public."Notification" ("userId", title, message, type, read, "createdAt")
     VALUES (
       v_report."userId",
       'Rapport validé',
       'Votre rapport du ' || to_char(v_report.date, 'DD/MM/YYYY') || ' a été validé.',
-      'success'
+      'success',
+      false,
+      now()
     );
   ELSE
-    INSERT INTO public."Notification" ("userId", title, message, type)
+    INSERT INTO public."Notification" ("userId", title, message, type, read, "createdAt")
     VALUES (
       v_report."userId",
       'Rapport rejeté',
       'Votre rapport du ' || to_char(v_report.date, 'DD/MM/YYYY') || ' a été rejeté.' ||
         CASE WHEN p_reason IS NOT NULL THEN ' Raison : ' || p_reason ELSE '' END ||
         ' Merci de le corriger et le resoumettre.',
-      'error'
+      'error',
+      false,
+      now()
     );
   END IF;
 
@@ -716,8 +774,8 @@ BEGIN
            AND message     = v_msg
            AND "createdAt" >= v_day_start
       ) THEN
-        INSERT INTO public."Notification" ("userId", title, message, type)
-        VALUES (v_member."userId", 'Rapport manquant', v_msg, 'warning');
+        INSERT INTO public."Notification" ("userId", title, message, type, read, "createdAt")
+        VALUES (v_member."userId", 'Rapport manquant', v_msg, 'warning', false, now());
         v_created := v_created + 1;
       END IF;
     END IF;

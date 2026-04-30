@@ -135,6 +135,20 @@ serve(async (req) => {
         );
       }
 
+      const { error: notifErr } = await supabase.from("Notification").insert({
+        userId,
+        title: target.email_confirmed_at ? "Lien de réinitialisation envoyé" : "Invitation renvoyée",
+        message: target.email_confirmed_at
+          ? "Un nouveau lien de réinitialisation de mot de passe vous a été envoyé par email."
+          : "Un nouveau lien d'invitation vous a été envoyé par email.",
+        type: "info",
+        read: false,
+        createdAt: new Date().toISOString(),
+      });
+      if (notifErr) {
+        console.warn("[admin-user-action] notification insert failed", notifErr);
+      }
+
       return new Response(JSON.stringify({ ok: true }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });

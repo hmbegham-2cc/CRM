@@ -47,9 +47,20 @@ export function AppLayout() {
       // noise. We'll re-check as soon as the tab regains focus.
       if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
       try {
-        const { data } = await supabase.from("Notification").select("id, read").eq("read", false).limit(1);
+        if (!user?.id) {
+          if (!cancelled) setHasUnread(false);
+          return;
+        }
+        const { data, error } = await supabase
+          .from("Notification")
+          .select("id, read")
+          .eq("userId", user.id)
+          .eq("read", false)
+          .limit(1);
+        if (error) throw error;
         if (!cancelled) setHasUnread((data || []).length > 0);
-      } catch {
+      } catch (err) {
+        console.warn("[Layout] unread notifications check failed", err);
         // Don't reset the badge on transient network failures — keep the
         // last known state to avoid flickering.
       }
@@ -65,7 +76,7 @@ export function AppLayout() {
       clearInterval(interval);
       document.removeEventListener("visibilitychange", onVisible);
     };
-  }, [location.pathname]);
+  }, [location.pathname, user?.id]);
 
   return (
     <div className="layout">

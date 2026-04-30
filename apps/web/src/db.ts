@@ -342,9 +342,11 @@ type NotificationRow = {
 
 export async function getNotifications(): Promise<NotificationRow[]> {
   return track("getNotifications", async () => {
+    const user = await requireUser();
     const { data, error } = await supabase
       .from("Notification")
       .select("*")
+      .eq("userId", user.id)
       .order("createdAt", { ascending: false })
       .limit(50);
     if (error) fail(error, "Impossible de charger les notifications");
@@ -353,7 +355,12 @@ export async function getNotifications(): Promise<NotificationRow[]> {
 }
 
 export async function markNotificationRead(id: string) {
-  const { error } = await supabase.from("Notification").update({ read: true }).eq("id", id);
+  const user = await requireUser();
+  const { error } = await supabase
+    .from("Notification")
+    .update({ read: true })
+    .eq("id", id)
+    .eq("userId", user.id);
   if (error) fail(error, "Impossible de marquer comme lue");
 }
 

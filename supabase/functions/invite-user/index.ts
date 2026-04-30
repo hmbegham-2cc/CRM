@@ -101,6 +101,18 @@ serve(async (req) => {
     );
     if (userErr) throw userErr;
 
+    const { error: notifErr } = await supabase.from("Notification").insert({
+      userId,
+      title: "Bienvenue sur CRC Reporting",
+      message: `Bienvenue ${trimmedName} ! Votre compte a été créé. Configurez votre mot de passe pour commencer.`,
+      type: "info",
+      read: false,
+      createdAt: new Date().toISOString(),
+    });
+    if (notifErr) {
+      console.warn("[invite-user] welcome notification failed", notifErr);
+    }
+
     // 6. Send the invite email via Brevo (single email — no duplicates)
     if (!BREVO_API_KEY) {
       console.warn("[invite-user] BREVO_API_KEY missing — invite link generated but not emailed");
