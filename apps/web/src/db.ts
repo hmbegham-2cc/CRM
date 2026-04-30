@@ -1,10 +1,31 @@
 import { supabase } from "./supabase";
 import type { Campaign, DailyReport, Role } from "@crc/types";
+import { diag, classifyError } from "./lib/diag";
 
 // ── Helpers ────────────────────────────────────────────────
 
 function fail(error: { message?: string } | null | undefined, fallback: string): never {
   throw new Error(error?.message || fallback);
+}
+
+/**
+ * Wraps a data-access promise so every call gets logged with its name and
+ * duration. Network admins / support can grep the console for `[CRC db]`.
+ */
+async function track<T>(name: string, fn: () => Promise<T>): Promise<T> {
+  const start = performance.now();
+  diag.info("db", `→ ${name}`);
+  try {
+    const out = await fn();
+    const ms = Math.round(performance.now() - start);
+    diag.info("db", `✓ ${name} (${ms}ms)`);
+    return out;
+  } catch (err) {
+    const ms = Math.round(performance.now() - start);
+    const { category, detail } = classifyError(err);
+    diag.error("db", `✗ ${name} failed after ${ms}ms — ${category}: ${detail}`, err);
+    throw err;
+  }
 }
 
 async function requireUser() {
@@ -16,17 +37,17 @@ async function requireUser() {
 // ── Campaigns ──────────────────────────────────────────────
 
 export async function getCampaigns(): Promise<Campaign[]> {
-  // Single FK Campaign↔CampaignMember (campaignId): no need to disambiguate.
-  // We fetch all members then filter active ones (endDate IS NULL) client-side.
-  const { data, error } = await supabase
-    .from("Campaign")
-    .select(`*, members:CampaignMember(id, endDate, user:User(id, name, email))`)
-    .order("name");
-  if (error) fail(error, "Impossible de charger les campagnes");
-  return (data || []).map((c: any) => ({
-    ...c,
-    members: (c.members || []).filter((m: any) => !m.endDate),
-  }));
+  return track("getCampaigns", async () => {
+    const { data, error } = await supabase
+      .from("Campaign")
+      .select(`*, members:CampaignMember(id, endDate, user:User(id, name, email))`)
+      .order("name");
+    if (error) fail(error, "Impossible de charger les campagnes");
+    return (data || []).map((c: any) => ({
+      ...c,
+      members: (c.members || []).filter((m: any) => !m.endDate),
+    }));
+  });
 }
 
 export async function createCampaign(name: string) {
@@ -58,13 +79,15 @@ export async function deleteCampaign(id: string) {
 // ── Teams ──────────────────────────────────────────────────
 
 export async function assignTeam(campaignId: string, userIds: string[]) {
-  const { data, error } = await supabase.rpc("assign_team", {
-    p_campaign_id: campaignId,
-    p_user_ids: userIds,
+  return track(`assignTeam(${campaignId}, ${userIds.length} users)`, async () => {
+    const { data, error } = await supabase.rpc("assign_team", {
+      p_campaign_id: campaignId,
+      p_user_ids: userIds,
+    });
+    if (error) fail(error, "Impossible d'assigner l'équipe");
+    if (data?.error) throw new Error(data.error);
+    return data;
   });
-  if (error) fail(error, "Impossible d'assigner l'équipe");
-  if (data?.error) throw new Error(data.error);
-  return data;
 }
 
 // ── Users ──────────────────────────────────────────────────
@@ -80,19 +103,21 @@ type UserRow = {
 };
 
 export async function getUsers(): Promise<UserRow[]> {
-  const { data, error } = await supabase
-    .from("User")
-    .select(
-      `id, name, email, role, "active", "createdAt",
-       campaignMemberships:CampaignMember(id, "endDate", campaign:Campaign(name))`,
-    )
-    .order("name");
-  if (error) fail(error, "Impossible de charger les utilisateurs");
-  return (data || []).map((u: any) => ({
-    ...u,
-    active: u.active ?? true,
-    campaignMemberships: (u.campaignMemberships || []).filter((m: any) => !m.endDate),
-  }));
+  return track("getUsers", async () => {
+    const { data, error } = await supabase
+      .from("User")
+      .select(
+        `id, name, email, role, "active", "createdAt",
+         campaignMemberships:CampaignMember(id, "endDate", campaign:Campaign(name))`,
+      )
+      .order("name");
+    if (error) fail(error, "Impossible de charger les utilisateurs");
+    return (data || []).map((u: any) => ({
+      ...u,
+      active: u.active ?? true,
+      campaignMemberships: (u.campaignMemberships || []).filter((m: any) => !m.endDate),
+    }));
+  });
 }
 
 export async function updateUserRole(userId: string, role: Role) {
@@ -115,27 +140,27 @@ type ReportFilters = {
 };
 
 export async function getReports(filters: ReportFilters = {}): Promise<DailyReport[]> {
-  // DailyReport has TWO FKs to User (userId and validatedById):
-  // disambiguate by FK column name (PostgREST embedded resource hint).
-  let query = supabase
-    .from("DailyReport")
-    .select(
-      `*,
-       user:User!userId(id, name, email),
-       campaign:Campaign(id, name),
-       validatedBy:User!validatedById(id, name)`,
-    )
-    .order("date", { ascending: false });
+  return track(`getReports(${JSON.stringify(filters)})`, async () => {
+    let query = supabase
+      .from("DailyReport")
+      .select(
+        `*,
+         user:User!userId(id, name, email),
+         campaign:Campaign(id, name),
+         validatedBy:User!validatedById(id, name)`,
+      )
+      .order("date", { ascending: false });
 
-  if (filters.campaignId) query = query.eq("campaignId", filters.campaignId);
-  if (filters.userId) query = query.eq("userId", filters.userId);
-  if (filters.status) query = query.eq("status", filters.status);
-  if (filters.dateFrom) query = query.gte("date", filters.dateFrom);
-  if (filters.dateTo) query = query.lte("date", filters.dateTo);
+    if (filters.campaignId) query = query.eq("campaignId", filters.campaignId);
+    if (filters.userId) query = query.eq("userId", filters.userId);
+    if (filters.status) query = query.eq("status", filters.status);
+    if (filters.dateFrom) query = query.gte("date", filters.dateFrom);
+    if (filters.dateTo) query = query.lte("date", filters.dateTo);
 
-  const { data, error } = await query;
-  if (error) fail(error, "Impossible de charger les rapports");
-  return (data || []) as DailyReport[];
+    const { data, error } = await query;
+    if (error) fail(error, "Impossible de charger les rapports");
+    return (data || []) as DailyReport[];
+  });
 }
 
 export async function upsertReport(reportData: {
@@ -200,13 +225,15 @@ type NotificationRow = {
 };
 
 export async function getNotifications(): Promise<NotificationRow[]> {
-  const { data, error } = await supabase
-    .from("Notification")
-    .select("*")
-    .order("createdAt", { ascending: false })
-    .limit(50);
-  if (error) fail(error, "Impossible de charger les notifications");
-  return data || [];
+  return track("getNotifications", async () => {
+    const { data, error } = await supabase
+      .from("Notification")
+      .select("*")
+      .order("createdAt", { ascending: false })
+      .limit(50);
+    if (error) fail(error, "Impossible de charger les notifications");
+    return data || [];
+  });
 }
 
 export async function markNotificationRead(id: string) {

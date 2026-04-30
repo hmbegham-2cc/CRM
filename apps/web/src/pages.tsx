@@ -14,6 +14,7 @@ import { supabase } from "./supabase";
 import { useAsync } from "./hooks/useAsync";
 import { useReloadOnFocus } from "./hooks/useReloadOnFocus";
 import { ConfirmModal } from "./components/ConfirmModal";
+import { diag } from "./lib/diag";
 import { toast } from "sonner";
 import jsPDF from "jspdf";
 import html2canvas from "html2canvas";

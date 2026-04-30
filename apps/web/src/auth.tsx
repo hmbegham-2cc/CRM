@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import type { AuthUser, Role } from "@crc/types";
 import { supabase } from "./supabase";
+import { diag, classifyError } from "./lib/diag";
 
 interface AuthCtx {
   user: AuthUser | null;
@@ -12,20 +13,28 @@ interface AuthCtx {
 const AuthContext = createContext<AuthCtx | undefined>(undefined);
 
 async function fetchProfile(userId: string): Promise<AuthUser | null> {
+  const start = performance.now();
   try {
     const { data, error } = await supabase
       .from("User")
       .select("id, email, name, role")
       .eq("id", userId)
       .maybeSingle();
+    const ms = Math.round(performance.now() - start);
     if (error) {
-      console.error("[fetchProfile]", error);
+      diag.error("auth", `fetchProfile failed in ${ms}ms`, error);
       return null;
     }
-    if (!data) return null;
+    if (!data) {
+      diag.warn("auth", `fetchProfile: no User row for id=${userId} (${ms}ms)`);
+      return null;
+    }
+    diag.info("auth", `fetchProfile ok (${ms}ms) role=${data.role}`);
     return { id: data.id, email: data.email, name: data.name, role: data.role as Role };
   } catch (err) {
-    console.error("[fetchProfile] threw", err);
+    const ms = Math.round(performance.now() - start);
+    const { category, detail } = classifyError(err);
+    diag.error("auth", `fetchProfile threw after ${ms}ms — ${category}: ${detail}`, err);
     return null;
   }
 }
@@ -41,22 +50,29 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     // Safety net: never keep the UI stuck on "Chargement..." for more than 8s,
     // even if Supabase getSession() hangs (network down, lock issues, etc.).
     const safety = window.setTimeout(() => {
-      if (mounted) setLoading(false);
+      if (mounted) {
+        diag.warn("auth", "safety net fired after 8s — releasing loading state");
+        setLoading(false);
+      }
     }, 8000);
 
     (async () => {
       try {
+        diag.info("auth", "getSession start");
         const { data: { session } } = await supabase.auth.getSession();
         if (!mounted) return;
         if (session?.user) {
+          diag.info("auth", `session restored for ${session.user.email}`);
           lastUserIdRef.current = session.user.id;
           const profile = await fetchProfile(session.user.id);
           if (!mounted) return;
-          // Don't clear the user on transient profile fetch failures.
           if (profile) setUser(profile);
+        } else {
+          diag.info("auth", "no active session");
         }
       } catch (err) {
-        console.error("[AuthProvider.getSession]", err);
+        const { category, detail } = classifyError(err);
+        diag.error("auth", `getSession threw — ${category}: ${detail}`, err);
       } finally {
         if (mounted) setLoading(false);
       }
@@ -64,6 +80,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (!mounted) return;
+      diag.info("auth", `onAuthStateChange: ${event}`, { hasSession: !!session?.user });
       try {
         if (
           (event === "SIGNED_IN" || event === "TOKEN_REFRESHED" || event === "USER_UPDATED") &&
@@ -72,15 +89,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           lastUserIdRef.current = session.user.id;
           const profile = await fetchProfile(session.user.id);
           if (!mounted) return;
-          // Keep current user if profile refresh fails intermittently (don't
-          // wipe the UI just because the network glitched).
           if (profile) setUser(profile);
         } else if (event === "SIGNED_OUT") {
           lastUserIdRef.current = null;
           setUser(null);
         }
       } catch (err) {
-        console.error("[AuthProvider.onAuthStateChange]", err);
+        const { category, detail } = classifyError(err);
+        diag.error("auth", `onAuthStateChange threw — ${category}: ${detail}`, err);
       }
     });
 
@@ -92,6 +108,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (document.visibilityState !== "visible") return;
       const uid = lastUserIdRef.current;
       if (!uid) return;
+      diag.info("auth", "tab visible again — refreshing profile");
       const profile = await fetchProfile(uid);
       if (mounted && profile) setUser(profile);
     };

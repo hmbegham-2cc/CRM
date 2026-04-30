@@ -4,8 +4,37 @@ import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { AuthProvider, useAuth } from "./auth";
 import { AppLayout } from "./layout";
 import { ErrorBoundary } from "./error-boundary";
+import { diag, classifyError, networkSnapshot } from "./lib/diag";
 import "./styles.css";
 import { Toaster } from "sonner";
+
+// ── Diagnostics: capture any uncaught error / promise rejection ────────────
+// These two listeners turn silent JavaScript failures into visible
+// `[CRC global] ...` lines in DevTools. Run `crcDiag.dump()` in the console
+// to copy the last 200 events when reporting an issue to the network admin.
+diag.info("boot", `app start ${new Date().toISOString()}`, {
+  userAgent: navigator.userAgent,
+  ...networkSnapshot(),
+});
+window.addEventListener("error", (e) => {
+  const { category, detail } = classifyError(e.error || e.message);
+  diag.error("global", `window.error — ${category}: ${detail}`, {
+    filename: e.filename,
+    lineno: e.lineno,
+    colno: e.colno,
+    error: e.error,
+  });
+});
+window.addEventListener("unhandledrejection", (e) => {
+  const { category, detail } = classifyError(e.reason);
+  diag.error("global", `unhandledrejection — ${category}: ${detail}`, e.reason);
+});
+window.addEventListener("online", () =>
+  diag.info("net", "navigator online", networkSnapshot()),
+);
+window.addEventListener("offline", () =>
+  diag.warn("net", "navigator offline", networkSnapshot()),
+);
 
 // All pages are code-split — the big `pages.tsx` chunk is only fetched
 // when the user actually navigates somewhere, keeping the initial bundle small.
