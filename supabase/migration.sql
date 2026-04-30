@@ -8,6 +8,20 @@
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
 -- ============================================================
+-- 0b. Role enum: add COACH_QUALITE if not yet present
+-- ============================================================
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_enum e
+    JOIN pg_type t ON t.oid = e.enumtypid
+    WHERE t.typname = 'Role' AND e.enumlabel = 'COACH_QUALITE'
+  ) THEN
+    ALTER TYPE public."Role" ADD VALUE 'COACH_QUALITE';
+  END IF;
+END $$;
+
+-- ============================================================
 -- 1. Schema migration: drop legacy auth columns, switch IDs to UUID
 -- ============================================================
 
@@ -200,7 +214,7 @@ DROP POLICY IF EXISTS "Admins can update users" ON public."User";
 CREATE POLICY "Admins can update users"
   ON public."User" FOR UPDATE
   TO authenticated
-  USING (public.current_user_role() = 'ADMIN');
+  USING (public.current_user_role() IN ('ADMIN','COACH_QUALITE'));
 
 DROP POLICY IF EXISTS "Admins can insert users" ON public."User";
 CREATE POLICY "Admins can insert users"
@@ -227,19 +241,19 @@ DROP POLICY IF EXISTS "Admins and Superviseurs can create campaigns" ON public."
 CREATE POLICY "Admins and Superviseurs can create campaigns"
   ON public."Campaign" FOR INSERT
   TO authenticated
-  WITH CHECK (public.current_user_role() IN ('ADMIN','SUPERVISEUR'));
+  WITH CHECK (public.current_user_role() IN ('ADMIN','SUPERVISEUR','COACH_QUALITE'));
 
 DROP POLICY IF EXISTS "Admins and Superviseurs can update campaigns" ON public."Campaign";
 CREATE POLICY "Admins and Superviseurs can update campaigns"
   ON public."Campaign" FOR UPDATE
   TO authenticated
-  USING (public.current_user_role() IN ('ADMIN','SUPERVISEUR'));
+  USING (public.current_user_role() IN ('ADMIN','SUPERVISEUR','COACH_QUALITE'));
 
 DROP POLICY IF EXISTS "Admins can delete campaigns" ON public."Campaign";
 CREATE POLICY "Admins can delete campaigns"
   ON public."Campaign" FOR DELETE
   TO authenticated
-  USING (public.current_user_role() = 'ADMIN');
+  USING (public.current_user_role() IN ('ADMIN','COACH_QUALITE'));
 
 -- ============================================================
 -- 6. RLS Policies — CampaignMember
@@ -254,19 +268,19 @@ DROP POLICY IF EXISTS "Admins and Superviseurs can insert campaign members" ON p
 CREATE POLICY "Admins and Superviseurs can insert campaign members"
   ON public."CampaignMember" FOR INSERT
   TO authenticated
-  WITH CHECK (public.current_user_role() IN ('ADMIN','SUPERVISEUR'));
+  WITH CHECK (public.current_user_role() IN ('ADMIN','SUPERVISEUR','COACH_QUALITE'));
 
 DROP POLICY IF EXISTS "Admins and Superviseurs can update campaign members" ON public."CampaignMember";
 CREATE POLICY "Admins and Superviseurs can update campaign members"
   ON public."CampaignMember" FOR UPDATE
   TO authenticated
-  USING (public.current_user_role() IN ('ADMIN','SUPERVISEUR'));
+  USING (public.current_user_role() IN ('ADMIN','SUPERVISEUR','COACH_QUALITE'));
 
 DROP POLICY IF EXISTS "Admins and Superviseurs can delete campaign members" ON public."CampaignMember";
 CREATE POLICY "Admins and Superviseurs can delete campaign members"
   ON public."CampaignMember" FOR DELETE
   TO authenticated
-  USING (public.current_user_role() IN ('ADMIN','SUPERVISEUR'));
+  USING (public.current_user_role() IN ('ADMIN','SUPERVISEUR','COACH_QUALITE'));
 
 -- ============================================================
 -- 7. RLS Policies — DailyReport
@@ -276,7 +290,7 @@ CREATE POLICY "Users can read reports based on role"
   ON public."DailyReport" FOR SELECT
   TO authenticated
   USING (
-    public.current_user_role() = 'ADMIN'
+    public.current_user_role() IN ('ADMIN','COACH_QUALITE')
     OR "userId" = auth.uid()
     OR EXISTS (
       SELECT 1 FROM public."CampaignMember" cm
@@ -291,7 +305,7 @@ CREATE POLICY "Users can create own reports"
   ON public."DailyReport" FOR INSERT
   TO authenticated
   WITH CHECK (
-    public.current_user_role() = 'ADMIN'
+    public.current_user_role() IN ('ADMIN','COACH_QUALITE')
     OR (
       "userId" = auth.uid()
       AND EXISTS (
@@ -309,8 +323,9 @@ CREATE POLICY "Users can update reports"
   TO authenticated
   USING (
     "userId" = auth.uid()
+    OR public.current_user_role() IN ('ADMIN','COACH_QUALITE')
     OR (
-      public.current_user_role() IN ('ADMIN','SUPERVISEUR')
+      public.current_user_role() = 'SUPERVISEUR'
       AND EXISTS (
         SELECT 1 FROM public."CampaignMember" cm
         WHERE cm."userId" = auth.uid()
@@ -362,11 +377,11 @@ DECLARE
 BEGIN
   -- Role may live in user_metadata (invite flow) OR app_metadata (dashboard / API)
   v_meta := NULLIF(trim(NEW.raw_user_meta_data->>'role'), '');
-  IF v_meta IN ('TELECONSEILLER', 'SUPERVISEUR', 'ADMIN') THEN
+  IF v_meta IN ('TELECONSEILLER', 'SUPERVISEUR', 'ADMIN', 'COACH_QUALITE') THEN
     v_role := v_meta::public."Role";
   ELSE
     v_meta := NULLIF(trim(NEW.raw_app_meta_data->>'role'), '');
-    IF v_meta IN ('TELECONSEILLER', 'SUPERVISEUR', 'ADMIN') THEN
+    IF v_meta IN ('TELECONSEILLER', 'SUPERVISEUR', 'ADMIN', 'COACH_QUALITE') THEN
       v_role := v_meta::public."Role";
     END IF;
   END IF;
@@ -447,11 +462,11 @@ BEGIN
 
   v_role := 'TELECONSEILLER'::public."Role";
   v_meta := NULLIF(trim(u.raw_user_meta_data->>'role'), '');
-  IF v_meta IN ('TELECONSEILLER', 'SUPERVISEUR', 'ADMIN') THEN
+  IF v_meta IN ('TELECONSEILLER', 'SUPERVISEUR', 'ADMIN', 'COACH_QUALITE') THEN
     v_role := v_meta::public."Role";
   ELSE
     v_meta := NULLIF(trim(u.raw_app_meta_data->>'role'), '');
-    IF v_meta IN ('TELECONSEILLER', 'SUPERVISEUR', 'ADMIN') THEN
+    IF v_meta IN ('TELECONSEILLER', 'SUPERVISEUR', 'ADMIN', 'COACH_QUALITE') THEN
       v_role := v_meta::public."Role";
     END IF;
   END IF;
@@ -531,16 +546,16 @@ BEGIN
   END IF;
 
   v_meta := NULLIF(trim(au.raw_user_meta_data->>'role'), '');
-  IF v_meta NOT IN ('TELECONSEILLER', 'SUPERVISEUR', 'ADMIN') THEN
+  IF v_meta NOT IN ('TELECONSEILLER', 'SUPERVISEUR', 'ADMIN', 'COACH_QUALITE') THEN
     v_meta := NULLIF(trim(au.raw_app_meta_data->>'role'), '');
   END IF;
-  IF v_meta NOT IN ('TELECONSEILLER', 'SUPERVISEUR', 'ADMIN') THEN
+  IF v_meta NOT IN ('TELECONSEILLER', 'SUPERVISEUR', 'ADMIN', 'COACH_QUALITE') THEN
     RETURN;
   END IF;
 
   v_meta_role := v_meta::public."Role";
-  r_meta := CASE v_meta_role WHEN 'ADMIN' THEN 3 WHEN 'SUPERVISEUR' THEN 2 ELSE 1 END;
-  r_cur  := CASE cur_role WHEN 'ADMIN' THEN 3 WHEN 'SUPERVISEUR' THEN 2 ELSE 1 END;
+  r_meta := CASE v_meta_role WHEN 'ADMIN' THEN 4 WHEN 'COACH_QUALITE' THEN 3 WHEN 'SUPERVISEUR' THEN 2 ELSE 1 END;
+  r_cur  := CASE cur_role WHEN 'ADMIN' THEN 4 WHEN 'COACH_QUALITE' THEN 3 WHEN 'SUPERVISEUR' THEN 2 ELSE 1 END;
 
   IF r_meta > r_cur THEN
     UPDATE public."User" SET role = v_meta_role, "updatedAt" = now() WHERE id = aid;
@@ -752,7 +767,7 @@ BEGIN
      WHERE cm."startDate" <= v_day_start
        AND (cm."endDate" IS NULL OR cm."endDate" >= v_day_start)
   LOOP
-    IF v_member.role = 'ADMIN' THEN CONTINUE; END IF;
+    IF v_member.role IN ('ADMIN','COACH_QUALITE') THEN CONTINUE; END IF;
 
     IF NOT EXISTS (
       SELECT 1

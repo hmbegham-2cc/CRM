@@ -41,8 +41,9 @@ serve(async (req) => {
       .select("role")
       .eq("id", caller.id)
       .single();
-    if (callerProfile?.role !== "ADMIN") {
-      throw new Error("Accès refusé : admin uniquement");
+    const callerRole = callerProfile?.role;
+    if (callerRole !== "ADMIN" && callerRole !== "COACH_QUALITE") {
+      throw new Error("Accès refusé : admin ou coach qualité uniquement");
     }
 
     // 2. Dispatch action
@@ -155,6 +156,7 @@ serve(async (req) => {
     }
 
     if (action === "delete-user") {
+      if (callerRole !== "ADMIN") throw new Error("Accès refusé : suppression réservée aux administrateurs");
       const userId = String(body.userId || "");
       if (!userId) throw new Error("userId requis");
       if (userId === caller.id) throw new Error("Vous ne pouvez pas vous supprimer vous-même");

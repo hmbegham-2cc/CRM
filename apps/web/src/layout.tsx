@@ -23,16 +23,16 @@ export function AppLayout() {
   const location = useLocation();
 
   const menuItems = [
-    { path: "/", label: "Dashboard", icon: Database, roles: ["TELECONSEILLER", "SUPERVISEUR", "ADMIN"] },
+    { path: "/", label: "Dashboard", icon: Database, roles: ["TELECONSEILLER", "SUPERVISEUR", "ADMIN", "COACH_QUALITE"] },
     { path: "/rapport", label: "Mon rapport", icon: FileEdit, roles: ["TELECONSEILLER", "SUPERVISEUR"] },
     { path: "/mes-saisies", label: "Mes saisies", icon: History, roles: ["TELECONSEILLER", "SUPERVISEUR"] },
-    { path: "/tous-les-rapports", label: "Tous les rapports", icon: LayoutDashboard, roles: ["SUPERVISEUR", "ADMIN"] },
-    { path: "/validation", label: "Validation", icon: CheckCircle, roles: ["SUPERVISEUR", "ADMIN"] },
-    { path: "/campagnes", label: "Campagnes", icon: Settings, roles: ["ADMIN"] },
-    { path: "/equipes", label: "Équipes", icon: Users, roles: ["ADMIN"] },
-    { path: "/utilisateurs", label: "Utilisateurs", icon: Users, roles: ["ADMIN"] },
-    { path: "/notifications", label: "Notifications", icon: Bell, roles: ["TELECONSEILLER", "SUPERVISEUR", "ADMIN"] },
-    { path: "/export", label: "Export Excel", icon: Download, roles: ["ADMIN", "SUPERVISEUR"] },
+    { path: "/tous-les-rapports", label: "Tous les rapports", icon: LayoutDashboard, roles: ["SUPERVISEUR", "ADMIN", "COACH_QUALITE"] },
+    { path: "/validation", label: "Validation", icon: CheckCircle, roles: ["SUPERVISEUR", "ADMIN", "COACH_QUALITE"] },
+    { path: "/campagnes", label: "Campagnes", icon: Settings, roles: ["ADMIN", "COACH_QUALITE"] },
+    { path: "/equipes", label: "Équipes", icon: Users, roles: ["ADMIN", "COACH_QUALITE"] },
+    { path: "/utilisateurs", label: "Utilisateurs", icon: Users, roles: ["ADMIN", "COACH_QUALITE"] },
+    { path: "/notifications", label: "Notifications", icon: Bell, roles: ["TELECONSEILLER", "SUPERVISEUR", "ADMIN", "COACH_QUALITE"] },
+    { path: "/export", label: "Export Excel", icon: Download, roles: ["ADMIN", "SUPERVISEUR", "COACH_QUALITE"] },
   ];
 
   const filteredMenu = menuItems.filter(item => item.roles.includes(user?.role || ""));

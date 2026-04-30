@@ -6,7 +6,7 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-const VALID_ROLES = ["TELECONSEILLER", "SUPERVISEUR", "ADMIN"] as const;
+const VALID_ROLES = ["TELECONSEILLER", "SUPERVISEUR", "ADMIN", "COACH_QUALITE"] as const;
 
 function escapeHtml(s: string) {
   return s

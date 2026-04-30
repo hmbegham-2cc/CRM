@@ -8,6 +8,29 @@ function fail(error: { message?: string } | null | undefined, fallback: string):
   throw new Error(error?.message || fallback);
 }
 
+async function failFunction(error: unknown, fallback: string): Promise<never> {
+  const context = (error as any)?.context;
+  if (context instanceof Response) {
+    try {
+      const body = await context.clone().json();
+      const message = body?.error || body?.message || body?.warning;
+      if (message) throw new Error(message);
+    } catch (jsonErr) {
+      if (jsonErr instanceof Error && jsonErr.message !== "Unexpected end of JSON input") {
+        throw jsonErr;
+      }
+      try {
+        const text = await context.clone().text();
+        if (text) throw new Error(text);
+      } catch {
+        // Fall through to the Supabase error message below.
+      }
+    }
+  }
+
+  throw new Error((error as any)?.message || fallback);
+}
+
 const DATA_OPERATION_TIMEOUT_MS = 25_000;
 
 function withOperationTimeout<T>(name: string, promise: Promise<T>): Promise<T> {
@@ -213,7 +236,7 @@ export async function updateUserRole(userId: string, role: Role) {
   const { data, error } = await supabase.functions.invoke("update-role", {
     body: { userId, role },
   });
-  if (error) fail(error, "Impossible de mettre à jour le rôle");
+  if (error) await failFunction(error, "Impossible de mettre à jour le rôle");
   if (data?.error) throw new Error(data.error);
   return data;
 }
@@ -391,7 +414,7 @@ export async function inviteUser(email: string, name: string, role: Role) {
   const { data, error } = await supabase.functions.invoke("invite-user", {
     body: { email, name, role },
   });
-  if (error) fail(error, "Impossible d'inviter l'utilisateur");
+  if (error) await failFunction(error, "Impossible d'inviter l'utilisateur");
   if (data?.error) throw new Error(data.error);
   return data;
 }
@@ -400,7 +423,7 @@ export async function resendInvite(userId: string) {
   const { data, error } = await supabase.functions.invoke("admin-user-action", {
     body: { action: "resend-invite", userId },
   });
-  if (error) fail(error, "Impossible de renvoyer l'invitation");
+  if (error) await failFunction(error, "Impossible de renvoyer l'invitation");
   if (data?.error) throw new Error(data.error);
   return data;
 }
@@ -409,7 +432,7 @@ export async function deleteUser(userId: string) {
   const { data, error } = await supabase.functions.invoke("admin-user-action", {
     body: { action: "delete-user", userId },
   });
-  if (error) fail(error, "Impossible de supprimer l'utilisateur");
+  if (error) await failFunction(error, "Impossible de supprimer l'utilisateur");
   if (data?.error) throw new Error(data.error);
   return data;
 }
@@ -464,25 +487,25 @@ export async function setupPassword(newPassword: string) {
 
 // ── Export ─────────────────────────────────────────────────
 
+const XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+
 export async function exportReports(
-  campaignId: string,
+  campaignId: string | null,
   dateFrom?: string,
   dateTo?: string,
+  groupBy: "campaign" | "all" = "campaign",
 ): Promise<Blob> {
-  // The export-reports Edge Function returns text/csv (not JSON).
-  // Supabase JS v2 returns a Blob for non-JSON content-types when invoked via .invoke().
-  // We normalize to a Blob regardless to keep callers simple.
+  // The export-reports Edge Function returns a binary .xlsx file.
+  // Supabase JS v2 returns a Blob for non-JSON content-types.
   const { data, error } = await supabase.functions.invoke("export-reports", {
-    body: { campaignId, dateFrom, dateTo },
+    body: { campaignId: campaignId || null, dateFrom, dateTo, groupBy },
   });
-  if (error) fail(error, "Impossible d'exporter les rapports");
+  if (error) await failFunction(error, "Impossible d'exporter les rapports");
 
-  if (data instanceof Blob) return data;
-  if (typeof data === "string") {
-    return new Blob([data], { type: "text/csv;charset=utf-8" });
-  }
-  // Fallback: shouldn't happen but be safe (some SDK versions return ArrayBuffer)
-  return new Blob([data as BlobPart], { type: "text/csv;charset=utf-8" });
+  if (data instanceof Blob) return new Blob([data], { type: XLSX_MIME });
+  if (data instanceof ArrayBuffer) return new Blob([data], { type: XLSX_MIME });
+  // Some SDK versions return the raw bytes as a plain object / Uint8Array
+  return new Blob([data as BlobPart], { type: XLSX_MIME });
 }
 
 // ── Cron (admin) ───────────────────────────────────────────

@@ -1,4 +1,4 @@
-export type Role = "TELECONSEILLER" | "SUPERVISEUR" | "ADMIN";
+export type Role = "TELECONSEILLER" | "SUPERVISEUR" | "ADMIN" | "COACH_QUALITE";
 export type ReportStatus = "DRAFT" | "SUBMITTED" | "VALIDATED" | "REJECTED";
 
 export interface AuthUser {

@@ -83,7 +83,7 @@ type UserRow = {
   id: string;
   name: string | null;
   email: string;
-  role: "TELECONSEILLER" | "SUPERVISEUR" | "ADMIN";
+  role: "TELECONSEILLER" | "SUPERVISEUR" | "ADMIN" | "COACH_QUALITE";
   active?: boolean;
   campaignMemberships: { campaign: { name: string } }[];
 };
@@ -201,7 +201,7 @@ export function RapportPage() {
   useEffect(() => {
     getCampaigns()
       .then((all) => {
-        const visibleCampaigns = user?.role === "ADMIN"
+        const visibleCampaigns = (user?.role === "ADMIN" || user?.role === "COACH_QUALITE")
           ? all
           : all.filter((c: any) => (c.members || []).some((m: any) => m.user?.id === user?.id));
         setCampaigns(visibleCampaigns);
@@ -661,7 +661,7 @@ export function DashboardPage() {
     getCampaigns()
       .then(setCampaigns)
       .catch((err) => console.error("[Dashboard] getCampaigns failed", err));
-    if (user?.role === 'ADMIN' || user?.role === 'SUPERVISEUR') {
+    if (user?.role === 'ADMIN' || user?.role === 'SUPERVISEUR' || user?.role === 'COACH_QUALITE') {
       getUsers().then(setUsers).catch(() => setUsers([]));
     }
   }, [user]);
@@ -725,7 +725,7 @@ export function DashboardPage() {
     initializedRef.current = true;
 
     const initialMode: 'PERSONAL' | 'TEAM' =
-      user.role === 'TELECONSEILLER' ? 'PERSONAL' : 'TEAM';
+      (user.role === 'TELECONSEILLER' || user.role === 'SUPERVISEUR') ? 'PERSONAL' : 'TEAM';
     const to = new Date().toISOString().split('T')[0];
     const from = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
     setViewMode(initialMode);
@@ -857,7 +857,7 @@ export function DashboardPage() {
               <h2 style={{ margin: 0 }}>
                 {viewMode === 'PERSONAL' ? 'Mon Dashboard Personnel' : 'Tableau de bord Équipe'}
               </h2>
-              {(user?.role === 'SUPERVISEUR' || user?.role === 'ADMIN') && (
+              {(user?.role === 'SUPERVISEUR' || user?.role === 'ADMIN' || user?.role === 'COACH_QUALITE') && (
                 <div className="view-toggle">
                   <button 
                     onClick={() => { setViewMode('TEAM'); loadData(pendingCampaignId, pendingDateFrom, pendingDateTo, pendingUserId, 'TEAM'); }}
@@ -904,7 +904,7 @@ export function DashboardPage() {
             </select>
           </div>
 
-          {viewMode === 'TEAM' && (user?.role === 'ADMIN' || user?.role === 'SUPERVISEUR') && (
+          {viewMode === 'TEAM' && (user?.role === 'ADMIN' || user?.role === 'SUPERVISEUR' || user?.role === 'COACH_QUALITE') && (
             <div className="field" style={{ marginBottom: 0 }}>
               <label className="label" htmlFor="dashboard-user">
                 <Users size={14} style={{ marginRight: 6 }} />
@@ -1145,8 +1145,8 @@ export function DashboardPage() {
                           width: "32px", 
                           height: "32px", 
                           borderRadius: "8px", 
-                          background: u.role === "SUPERVISEUR" ? "var(--accent)" : "#f1f5f9", 
-                          color: u.role === "SUPERVISEUR" ? "white" : "var(--primary)",
+                          background: u.role === "ADMIN" ? "#fef2f2" : u.role === "COACH_QUALITE" ? "#eff6ff" : u.role === "SUPERVISEUR" ? "var(--accent)" : "#f1f5f9", 
+                          color: u.role === "ADMIN" ? "var(--danger)" : u.role === "COACH_QUALITE" ? "var(--primary)" : u.role === "SUPERVISEUR" ? "white" : "var(--primary)",
                           display: "flex", 
                           alignItems: "center", 
                           justifyContent: "center", 
@@ -1162,8 +1162,8 @@ export function DashboardPage() {
                       </div>
                     </td>
                     <td>
-                      <span className={`badge ${u.role === "SUPERVISEUR" ? "badge-validated" : "badge-draft"}`} style={{ fontSize: "11px" }}>
-                        {u.role}
+                      <span className={`badge ${getRoleBadgeClass(u.role)}`} style={{ fontSize: "11px" }}>
+                        {getRoleLabel(u.role)}
                       </span>
                     </td>
                     <td>
@@ -2030,10 +2030,12 @@ export function UtilisateursPage() {
           <p className="muted">Gérez vos équipes et invitez de nouveaux collaborateurs</p>
         </div>
         <div className="page-header-actions">
-          <button className="btn btn-primary" onClick={() => setShowInvite(!showInvite)}>
-            {showInvite ? <Plus size={18} style={{ transform: 'rotate(45deg)' }} /> : <UserPlus size={18} />}
-            {showInvite ? "Annuler" : "Nouvel utilisateur"}
-          </button>
+          {currentUser?.role === "ADMIN" && (
+            <button className="btn btn-primary" onClick={() => setShowInvite(!showInvite)}>
+              {showInvite ? <Plus size={18} style={{ transform: 'rotate(45deg)' }} /> : <UserPlus size={18} />}
+              {showInvite ? "Annuler" : "Nouvel utilisateur"}
+            </button>
+          )}
         </div>
       </div>
 
@@ -2134,6 +2136,7 @@ export function UtilisateursPage() {
                               >
                                 <option value="TELECONSEILLER">Téléconseiller</option>
                                 <option value="SUPERVISEUR">Superviseur</option>
+                                <option value="COACH_QUALITE">Coach Qualité</option>
                                 <option value="ADMIN">Administrateur</option>
                               </select>
                             </td>
@@ -2177,7 +2180,7 @@ export function UtilisateursPage() {
                                 >
                                   Renvoyer
                                 </button>
-                                {!isSelf && (
+                                {!isSelf && currentUser?.role === "ADMIN" && (
                                   <button
                                     className="btn btn-secondary"
                                     style={{ fontSize: 11, padding: "6px 8px" }}
@@ -2187,7 +2190,7 @@ export function UtilisateursPage() {
                                     {isActive ? "Désactiver" : "Réactiver"}
                                   </button>
                                 )}
-                                {!isSelf && (
+                                {!isSelf && currentUser?.role === "ADMIN" && (
                                   <button
                                     className="btn btn-danger"
                                     style={{ fontSize: 11, padding: "6px 8px" }}
@@ -2267,6 +2270,7 @@ export function UtilisateursPage() {
                       >
                         <option value="TELECONSEILLER">Téléconseiller</option>
                         <option value="SUPERVISEUR">Superviseur</option>
+                        <option value="COACH_QUALITE">Coach Qualité</option>
                         <option value="ADMIN">Administrateur</option>
                       </select>
                     </div>
@@ -2305,7 +2309,7 @@ export function UtilisateursPage() {
                       >
                         Renvoyer
                       </button>
-                      {!isSelf && (
+                      {!isSelf && currentUser?.role === "ADMIN" && (
                         <button
                           className="btn btn-secondary"
                           style={{ flex: 1, fontSize: 11, padding: "6px 8px", minWidth: 90 }}
@@ -2315,7 +2319,7 @@ export function UtilisateursPage() {
                           {isActive ? "Désactiver" : "Réactiver"}
                         </button>
                       )}
-                      {!isSelf && (
+                      {!isSelf && currentUser?.role === "ADMIN" && (
                         <button
                           className="btn btn-danger"
                           style={{ flex: 1, fontSize: 11, padding: "6px 8px", minWidth: 90 }}
@@ -2354,6 +2358,7 @@ export function UtilisateursPage() {
                 <select className="select" value={inviteData.role} onChange={e => setInviteData({...inviteData, role: e.target.value as any})}>
                   <option value="TELECONSEILLER">Téléconseiller</option>
                   <option value="SUPERVISEUR">Superviseur</option>
+                  <option value="COACH_QUALITE">Coach Qualité</option>
                   <option value="ADMIN">Administrateur</option>
                 </select>
               </div>
@@ -2936,11 +2941,62 @@ export function ChangePasswordPage() {
   );
 }
 
+// ── Preset period helper ────────────────────────────────────────────────
+function getPresetRange(preset: string): { from: string; to: string } {
+  const today = new Date();
+  const fmt = (d: Date) => d.toISOString().slice(0, 10);
+  const startOfWeek = (d: Date) => {
+    const r = new Date(d);
+    r.setDate(d.getDate() - ((d.getDay() + 6) % 7)); // Monday
+    return r;
+  };
+
+  switch (preset) {
+    case "this_week": {
+      const mon = startOfWeek(today);
+      const sun = new Date(mon); sun.setDate(mon.getDate() + 6);
+      return { from: fmt(mon), to: fmt(sun) };
+    }
+    case "last_week": {
+      const mon = startOfWeek(today); mon.setDate(mon.getDate() - 7);
+      const sun = new Date(mon); sun.setDate(mon.getDate() + 6);
+      return { from: fmt(mon), to: fmt(sun) };
+    }
+    case "this_month": {
+      const from = new Date(today.getFullYear(), today.getMonth(), 1);
+      const to   = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+      return { from: fmt(from), to: fmt(to) };
+    }
+    case "last_month": {
+      const from = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+      const to   = new Date(today.getFullYear(), today.getMonth(), 0);
+      return { from: fmt(from), to: fmt(to) };
+    }
+    case "this_quarter": {
+      const q = Math.floor(today.getMonth() / 3);
+      const from = new Date(today.getFullYear(), q * 3, 1);
+      const to   = new Date(today.getFullYear(), q * 3 + 3, 0);
+      return { from: fmt(from), to: fmt(to) };
+    }
+    case "this_year": {
+      return {
+        from: `${today.getFullYear()}-01-01`,
+        to:   `${today.getFullYear()}-12-31`,
+      };
+    }
+    default:
+      return { from: fmt(new Date(Date.now() - 30 * 86400_000)), to: fmt(today) };
+  }
+}
+
 export function ExportPage() {
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
-  const [campaignId, setCampaignId] = useState("");
-  const [dateFrom, setDateFrom] = useState(new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10));
-  const [dateTo, setDateTo] = useState(new Date().toISOString().slice(0, 10));
+  const [campaignId, setCampaignId] = useState(""); // "" = all campaigns
+  const [groupBy, setGroupBy] = useState<"campaign" | "all">("campaign");
+  const [dateFrom, setDateFrom] = useState(getPresetRange("this_month").from);
+  const [dateTo,   setDateTo]   = useState(getPresetRange("this_month").to);
+  const [preset, setPreset] = useState("this_month");
+  const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     getCampaigns()
@@ -2951,79 +3007,219 @@ export function ExportPage() {
       });
   }, []);
 
-  async function doExport() {
-    const qp = new URLSearchParams({ 
-      campaignId,
-      ...(dateFrom ? { dateFrom } : {}),
-      ...(dateTo ? { dateTo } : {})
-    });
-    const tId = toast.loading("Génération du fichier Excel...");
-    try {
-      const blob = await exportReports(campaignId, dateFrom, dateTo);
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `reporting_${campaignId}_${Date.now()}.xlsx`;
-      a.click();
-      toast.success("Export terminé !", { id: tId });
-    } catch (err: any) {
-      toast.error("Échec de l'export : " + err.message, { id: tId });
+  function applyPreset(p: string) {
+    setPreset(p);
+    if (p !== "custom") {
+      const { from, to } = getPresetRange(p);
+      setDateFrom(from);
+      setDateTo(to);
     }
   }
 
+  async function doExport() {
+    setBusy(true);
+    const tId = toast.loading("Génération du fichier Excel...");
+    try {
+      const blob = await exportReports(campaignId || null, dateFrom, dateTo, groupBy);
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      const label = campaignId
+        ? campaigns.find(c => c.id === campaignId)?.name || campaignId
+        : "toutes_campagnes";
+      a.download = `reporting_${label.replace(/\s+/g, "_")}_${dateFrom}_${dateTo}.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(url);
+      toast.success("Export terminé !", { id: tId });
+    } catch (err: any) {
+      toast.error("Échec de l'export : " + err.message, { id: tId });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const PRESETS = [
+    { value: "this_week",    label: "Cette semaine" },
+    { value: "last_week",    label: "Semaine dernière" },
+    { value: "this_month",   label: "Ce mois" },
+    { value: "last_month",   label: "Mois dernier" },
+    { value: "this_quarter", label: "Ce trimestre" },
+    { value: "this_year",    label: "Cette année" },
+    { value: "custom",       label: "Personnalisé" },
+  ];
+
   return (
-    <div className="card">
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "24px" }}>
-        <div>
-          <h1>Export Excel</h1>
-          <p className="muted">Générez des rapports détaillés au format Excel</p>
-        </div>
-        <div style={{ background: "rgba(37, 99, 235, 0.1)", padding: "12px", borderRadius: "12px" }}>
-          <Download color="var(--primary)" />
-        </div>
-      </div>
-
-      <div style={{ display: "grid", gap: "20px" }}>
-        <div className="field">
-          <label className="label" htmlFor="export-campaign">
-            <Target size={14} style={{ marginRight: 6 }} />
-            Sélectionner la campagne
-          </label>
-          <select id="export-campaign" className="select" value={campaignId} onChange={(e) => setCampaignId(e.target.value)}>
-            <option value="">Sélectionner une campagne</option>
-            {campaigns.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-          </select>
-        </div>
-
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px" }}>
-          <div className="field">
-            <label className="label" htmlFor="exp-date-from">
-              <Calendar size={14} style={{ marginRight: 6 }} />
-              Date de début
-            </label>
-            <input id="exp-date-from" type="date" className="input" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
+    <div style={{ maxWidth: 680, margin: "0 auto" }}>
+      <div className="card">
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "24px" }}>
+          <div>
+            <h1>Export Excel</h1>
+            <p className="muted">Générez des classeurs Excel détaillés par campagne ou période</p>
           </div>
-          <div className="field">
-            <label className="label" htmlFor="exp-date-to">
-              <Calendar size={14} style={{ marginRight: 6 }} />
-              Date de fin
-            </label>
-            <input id="exp-date-to" type="date" className="input" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
+          <div style={{ background: "rgba(37, 99, 235, 0.1)", padding: "12px", borderRadius: "12px" }}>
+            <Download color="var(--primary)" />
           </div>
         </div>
 
-        <button 
-          className="btn btn-primary" 
-          style={{ height: "48px" }} 
-          disabled={!campaignId} 
-          onClick={doExport}
-        >
-          <Download size={18} />
-          Générer le fichier Excel
-        </button>
+        <div style={{ display: "grid", gap: "20px" }}>
+
+          {/* ── Période ── */}
+          <div className="field">
+            <label className="label">
+              <Calendar size={14} style={{ marginRight: 6 }} />
+              Période
+            </label>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 12 }}>
+              {PRESETS.map(p => (
+                <button
+                  key={p.value}
+                  type="button"
+                  onClick={() => applyPreset(p.value)}
+                  style={{
+                    padding: "6px 14px",
+                    borderRadius: 20,
+                    border: "1px solid",
+                    borderColor: preset === p.value ? "var(--primary)" : "#cbd5e1",
+                    background: preset === p.value ? "var(--primary)" : "transparent",
+                    color: preset === p.value ? "#fff" : "var(--text-muted)",
+                    fontSize: 13,
+                    cursor: "pointer",
+                    fontWeight: preset === p.value ? 600 : 400,
+                    transition: "all 0.15s",
+                  }}
+                >
+                  {p.label}
+                </button>
+              ))}
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+              <div>
+                <label className="label" style={{ fontSize: 12 }}>Du</label>
+                <input
+                  type="date"
+                  className="input"
+                  value={dateFrom}
+                  onChange={(e) => { setDateFrom(e.target.value); setPreset("custom"); }}
+                />
+              </div>
+              <div>
+                <label className="label" style={{ fontSize: 12 }}>Au</label>
+                <input
+                  type="date"
+                  className="input"
+                  value={dateTo}
+                  onChange={(e) => { setDateTo(e.target.value); setPreset("custom"); }}
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* ── Campagne ── */}
+          <div className="field">
+            <label className="label" htmlFor="export-campaign">
+              <Target size={14} style={{ marginRight: 6 }} />
+              Campagne
+            </label>
+            <select
+              id="export-campaign"
+              className="select"
+              value={campaignId}
+              onChange={(e) => setCampaignId(e.target.value)}
+            >
+              <option value="">Toutes les campagnes</option>
+              {campaigns.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+          </div>
+
+          {/* ── Organisation (visible uniquement si toutes les campagnes) ── */}
+          {!campaignId && (
+            <div className="field">
+              <label className="label">Organisation du classeur</label>
+              <div style={{ display: "flex", gap: 12 }}>
+                {[
+                  { value: "campaign", label: "Une feuille par campagne + résumé" },
+                  { value: "all",      label: "Toutes les données en une feuille" },
+                ].map(opt => (
+                  <label
+                    key={opt.value}
+                    style={{
+                      flex: 1,
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 8,
+                      padding: "10px 14px",
+                      border: "1px solid",
+                      borderColor: groupBy === opt.value ? "var(--primary)" : "#e2e8f0",
+                      borderRadius: 8,
+                      cursor: "pointer",
+                      fontSize: 13,
+                      background: groupBy === opt.value ? "rgba(37,99,235,0.06)" : "transparent",
+                      fontWeight: groupBy === opt.value ? 600 : 400,
+                      transition: "all 0.15s",
+                    }}
+                  >
+                    <input
+                      type="radio"
+                      name="groupBy"
+                      value={opt.value}
+                      checked={groupBy === opt.value}
+                      onChange={() => setGroupBy(opt.value as "campaign" | "all")}
+                      style={{ accentColor: "var(--primary)" }}
+                    />
+                    {opt.label}
+                  </label>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* ── Bouton export ── */}
+          <button
+            className="btn btn-primary"
+            style={{ height: "48px", fontSize: 15, marginTop: 4 }}
+            disabled={busy || !dateFrom || !dateTo}
+            onClick={doExport}
+          >
+            {busy ? (
+              <>Génération en cours...</>
+            ) : (
+              <>
+                <Download size={18} />
+                Télécharger le fichier Excel
+              </>
+            )}
+          </button>
+
+          {!campaignId && groupBy === "campaign" && (
+            <p className="muted" style={{ fontSize: 12, marginTop: -12 }}>
+              Le classeur contiendra une feuille de résumé + une feuille par campagne active sur la période.
+            </p>
+          )}
+        </div>
       </div>
     </div>
   );
+}
+
+function getRoleLabel(role: string) {
+  switch (role) {
+    case "TELECONSEILLER": return "Téléconseiller";
+    case "SUPERVISEUR": return "Superviseur";
+    case "ADMIN": return "Administrateur";
+    case "COACH_QUALITE": return "Coach Qualité";
+    default: return role;
+  }
+}
+
+function getRoleBadgeClass(role: string) {
+  switch (role) {
+    case "ADMIN": return "badge-rejected";
+    case "COACH_QUALITE": return "badge-submitted";
+    case "SUPERVISEUR": return "badge-validated";
+    default: return "badge-draft";
+  }
 }
 
 function getStatusBadgeClass(status: string) {
