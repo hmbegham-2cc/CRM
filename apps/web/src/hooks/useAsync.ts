@@ -21,14 +21,16 @@ export function useAsync(): [boolean, <T>(fn: () => Promise<T>) => Promise<T | u
   const mounted = useRef(true);
 
   useEffect(() => {
+    // Reset on (re)mount: under React 19 StrictMode the cleanup of the first
+    // mount sets mounted.current=false; without re-setting it to true here,
+    // the second mount would never call setBusy(false), leaving buttons
+    // permanently disabled.
+    mounted.current = true;
     return () => {
       mounted.current = false;
     };
   }, []);
 
-  // We don't use useEffect here on purpose — we want minimal overhead.
-  // The mounted ref is reset on each render of a fresh hook instance, and
-  // React StrictMode double-mount is fine because the state is local.
   const run = useCallback(async <T,>(fn: () => Promise<T>): Promise<T | undefined> => {
     if (inFlight.current) return undefined;
     inFlight.current = true;

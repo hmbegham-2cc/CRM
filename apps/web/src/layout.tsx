@@ -38,17 +38,21 @@ export function AppLayout() {
   const [hasUnread, setHasUnread] = useState(false);
 
   useEffect(() => {
+    let cancelled = false;
     const checkUnread = async () => {
       try {
         const { data } = await supabase.from("Notification").select("id, read").eq("read", false).limit(1);
-        setHasUnread((data || []).length > 0);
+        if (!cancelled) setHasUnread((data || []).length > 0);
       } catch {
-        setHasUnread(false);
+        if (!cancelled) setHasUnread(false);
       }
     };
     checkUnread();
     const interval = setInterval(checkUnread, 30000);
-    return () => clearInterval(interval);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
   }, [location.pathname]);
 
   return (

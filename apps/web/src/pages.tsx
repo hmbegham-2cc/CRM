@@ -12,6 +12,7 @@ import {
 import { useAuth } from "./auth";
 import { supabase } from "./supabase";
 import { useAsync } from "./hooks/useAsync";
+import { useReloadOnFocus } from "./hooks/useReloadOnFocus";
 import { ConfirmModal } from "./components/ConfirmModal";
 import { toast } from "sonner";
 import jsPDF from "jspdf";
@@ -164,13 +165,18 @@ export function RapportPage() {
   const [reportId, setReportId] = useState<string | null>(null);
 
   useEffect(() => {
-    getCampaigns().then((all) => {
-      if (user?.role === "SUPERVISEUR") {
-        setCampaigns(all.filter((c: any) => (c.members || []).some((m: any) => m.user?.id === user.id)));
-      } else {
-        setCampaigns(all);
-      }
-    });
+    getCampaigns()
+      .then((all) => {
+        if (user?.role === "SUPERVISEUR") {
+          setCampaigns(all.filter((c: any) => (c.members || []).some((m: any) => m.user?.id === user.id)));
+        } else {
+          setCampaigns(all);
+        }
+      })
+      .catch((err) => {
+        console.error("[Rapport] getCampaigns failed", err);
+        toast.error(err?.message || "Impossible de charger les campagnes");
+      });
   }, [user]);
 
   const [busy, run] = useAsync();
@@ -353,11 +359,20 @@ export function MesSaisiesPage() {
   const [reports, setReports] = useState<DailyReport[]>([]);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => { 
-    getReports({ userId: user?.id })
+  const load = () => {
+    if (!user?.id) return;
+    setLoading(true);
+    getReports({ userId: user.id })
       .then(setReports)
-      .finally(() => setLoading(false)); 
-  }, [user?.id]);
+      .catch((err) => {
+        console.error("[MesSaisies] load failed", err);
+        toast.error(err?.message || "Impossible de charger vos rapports");
+      })
+      .finally(() => setLoading(false));
+  };
+
+  useEffect(() => { load(); }, [user?.id]);
+  useReloadOnFocus(load, !!user?.id);
 
   return (
     <div>
@@ -390,19 +405,30 @@ export function ValidationPage() {
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [loading, setLoading] = useState(false);
 
-  useEffect(() => { getCampaigns().then(setCampaigns); }, []);
-  
   useEffect(() => {
+    getCampaigns()
+      .then(setCampaigns)
+      .catch((err) => console.error("[Validation] getCampaigns failed", err));
+  }, []);
+
+  const load = () => {
     setLoading(true);
-    getReports({ 
-      status: "SUBMITTED", 
+    getReports({
+      status: "SUBMITTED",
       ...(campaignId ? { campaignId } : {}),
       ...(dateFrom ? { dateFrom } : {}),
-      ...(dateTo ? { dateTo } : {})
+      ...(dateTo ? { dateTo } : {}),
     })
       .then(setReports)
+      .catch((err) => {
+        console.error("[Validation] load failed", err);
+        toast.error(err?.message || "Impossible de charger les rapports");
+      })
       .finally(() => setLoading(false));
-  }, [campaignId, dateFrom, dateTo]);
+  };
+
+  useEffect(() => { load(); }, [campaignId, dateFrom, dateTo]);
+  useReloadOnFocus(load);
 
   const [rejectReasons, setRejectReasons] = useState<Record<string, string>>({});
   const [acting, setActing] = useState<Set<string>>(new Set());
@@ -599,8 +625,9 @@ export function DashboardPage() {
   const dashboardRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    // On ne charge que les campagnes auxquelles l'utilisateur a accès
-    getCampaigns().then(setCampaigns);
+    getCampaigns()
+      .then(setCampaigns)
+      .catch((err) => console.error("[Dashboard] getCampaigns failed", err));
     if (user?.role === 'ADMIN' || user?.role === 'SUPERVISEUR') {
       getUsers().then(setUsers).catch(() => setUsers([]));
     }
@@ -639,8 +666,9 @@ export function DashboardPage() {
       } else {
         setPrevReports([]);
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error("Erreur lors du chargement des données du dashboard", err);
+      toast.error(err?.message || "Impossible de charger les données du dashboard");
     } finally {
       setLoading(false);
     }
@@ -659,6 +687,9 @@ export function DashboardPage() {
     setUserIdFilter("");
     loadData("", from, to, "", viewMode);
   }, []);
+
+  // Reload current filters when the tab regains focus.
+  useReloadOnFocus(() => loadData(campaignId, dateFrom, dateTo, userIdFilter, viewMode));
 
   const handleApplyFilters = () => {
     setCampaignId(pendingCampaignId);
@@ -1113,21 +1144,24 @@ export function AllReportsPage() {
   const [dateTo, setDateTo] = useState("");
 
   useEffect(() => {
-    getCampaigns().then(setCampaigns);
+    getCampaigns()
+      .then(setCampaigns)
+      .catch((err) => console.error("[AllReports] getCampaigns failed", err));
     load();
   }, []);
 
   const load = () => {
     setLoading(true);
-    const qp = new URLSearchParams({ 
-      ...(campaignId ? { campaignId } : {}),
-      ...(dateFrom ? { dateFrom } : {}),
-      ...(dateTo ? { dateTo } : {})
-    });
     getReports({ campaignId, ...(dateFrom ? { dateFrom } : {}), ...(dateTo ? { dateTo } : {}) })
       .then(setReports)
+      .catch((err) => {
+        console.error("[AllReports] load failed", err);
+        toast.error(err?.message || "Impossible de charger les rapports");
+      })
       .finally(() => setLoading(false));
   };
+
+  useReloadOnFocus(load);
 
   return (
     <div>
@@ -1183,10 +1217,15 @@ export function CampagnesPage() {
     setLoading(true);
     getCampaigns()
       .then(setCampaigns)
+      .catch((err) => {
+        console.error("[Campagnes] load failed", err);
+        toast.error(err?.message || "Impossible de charger les campagnes");
+      })
       .finally(() => setLoading(false));
   };
 
   useEffect(() => { load(); }, []);
+  useReloadOnFocus(load);
 
   return (
     <div>
@@ -1340,10 +1379,18 @@ export function EquipesPage() {
   const [saving, setSaving] = useState(false);
   const [searchParams] = useSearchParams();
 
-  useEffect(() => { 
-    getCampaigns().then(setCampaigns); 
-    getUsers().then(setUsers).catch(() => setUsers([])); 
-  }, []);
+  const loadEquipes = () => {
+    getCampaigns()
+      .then(setCampaigns)
+      .catch((err) => {
+        console.error("[Equipes] getCampaigns failed", err);
+        toast.error(err?.message || "Impossible de charger les campagnes");
+      });
+    getUsers().then(setUsers).catch(() => setUsers([]));
+  };
+
+  useEffect(() => { loadEquipes(); }, []);
+  useReloadOnFocus(loadEquipes);
 
   useEffect(() => {
     const qpCampaignId = searchParams.get("campaignId");
@@ -1479,10 +1526,15 @@ export function UtilisateursPage() {
     setLoading(true);
     getUsers()
       .then(setUsers as any)
+      .catch((err) => {
+        console.error("[Utilisateurs] load failed", err);
+        toast.error(err?.message || "Impossible de charger les utilisateurs");
+      })
       .finally(() => setLoading(false));
   };
 
   useEffect(() => { load(); }, []);
+  useReloadOnFocus(load);
 
   const filteredUsers = useMemo(() => {
     return users.filter((u) =>
@@ -1912,10 +1964,15 @@ export function NotificationsPage() {
     setLoading(true);
     getNotifications()
       .then(setNotifications)
+      .catch((err) => {
+        console.error("[Notifications] load failed", err);
+        toast.error(err?.message || "Impossible de charger les notifications");
+      })
       .finally(() => setLoading(false));
   };
 
   useEffect(() => { load(); }, []);
+  useReloadOnFocus(load);
 
   const markAsRead = (id: string) => run(async () => {
     try {
@@ -2216,7 +2273,14 @@ export function ExportPage() {
   const [dateFrom, setDateFrom] = useState(new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10));
   const [dateTo, setDateTo] = useState(new Date().toISOString().slice(0, 10));
 
-  useEffect(() => { getCampaigns().then(setCampaigns); }, []);
+  useEffect(() => {
+    getCampaigns()
+      .then(setCampaigns)
+      .catch((err) => {
+        console.error("[Export] getCampaigns failed", err);
+        toast.error(err?.message || "Impossible de charger les campagnes");
+      });
+  }, []);
 
   async function doExport() {
     const qp = new URLSearchParams({ 
