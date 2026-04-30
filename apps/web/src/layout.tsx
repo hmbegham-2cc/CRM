@@ -40,18 +40,29 @@ export function AppLayout() {
   useEffect(() => {
     let cancelled = false;
     const checkUnread = async () => {
+      // Skip the poll when the tab is hidden: any HTTP/2 connection kept
+      // alive while the user was on another tab is likely killed by the
+      // corporate proxy, so polling here just produces ERR_CONNECTION_CLOSED
+      // noise. We'll re-check as soon as the tab regains focus.
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
       try {
         const { data } = await supabase.from("Notification").select("id, read").eq("read", false).limit(1);
         if (!cancelled) setHasUnread((data || []).length > 0);
       } catch {
-        if (!cancelled) setHasUnread(false);
+        // Don't reset the badge on transient network failures — keep the
+        // last known state to avoid flickering.
       }
     };
     checkUnread();
-    const interval = setInterval(checkUnread, 30000);
+    const interval = setInterval(checkUnread, 60000);
+    const onVisible = () => {
+      if (document.visibilityState === "visible") checkUnread();
+    };
+    document.addEventListener("visibilitychange", onVisible);
     return () => {
       cancelled = true;
       clearInterval(interval);
+      document.removeEventListener("visibilitychange", onVisible);
     };
   }, [location.pathname]);
 
