@@ -311,13 +311,27 @@ LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public, pg_temp
 AS $$
+DECLARE
+  v_role public."Role" := 'TELECONSEILLER'::public."Role";
+  v_meta text;
 BEGIN
+  -- Role may live in user_metadata (invite flow) OR app_metadata (dashboard / API)
+  v_meta := NULLIF(trim(NEW.raw_user_meta_data->>'role'), '');
+  IF v_meta IN ('TELECONSEILLER', 'SUPERVISEUR', 'ADMIN') THEN
+    v_role := v_meta::public."Role";
+  ELSE
+    v_meta := NULLIF(trim(NEW.raw_app_meta_data->>'role'), '');
+    IF v_meta IN ('TELECONSEILLER', 'SUPERVISEUR', 'ADMIN') THEN
+      v_role := v_meta::public."Role";
+    END IF;
+  END IF;
+
   INSERT INTO public."User" (id, email, name, role, "createdAt", "updatedAt")
   VALUES (
     NEW.id,
     NEW.email,
-    COALESCE(NEW.raw_user_meta_data->>'name', split_part(NEW.email, '@', 1)),
-    COALESCE((NEW.raw_user_meta_data->>'role')::public."Role", 'TELECONSEILLER'),
+    COALESCE(NULLIF(trim(NEW.raw_user_meta_data->>'name'), ''), split_part(NEW.email, '@', 1)),
+    v_role,
     now(),
     now()
   )
@@ -351,6 +365,7 @@ DECLARE
   aid uuid := auth.uid();
   u record;
   v_role public."Role";
+  v_meta text;
 BEGIN
   IF aid IS NULL THEN
     RETURN;
@@ -360,7 +375,7 @@ BEGIN
     RETURN;
   END IF;
 
-  SELECT id, email, raw_user_meta_data
+  SELECT id, email, raw_user_meta_data, raw_app_meta_data
     INTO u
     FROM auth.users
    WHERE id = aid;
@@ -369,8 +384,14 @@ BEGIN
   END IF;
 
   v_role := 'TELECONSEILLER'::public."Role";
-  IF (u.raw_user_meta_data->>'role') IN ('TELECONSEILLER', 'SUPERVISEUR', 'ADMIN') THEN
-    v_role := (u.raw_user_meta_data->>'role')::public."Role";
+  v_meta := NULLIF(trim(u.raw_user_meta_data->>'role'), '');
+  IF v_meta IN ('TELECONSEILLER', 'SUPERVISEUR', 'ADMIN') THEN
+    v_role := v_meta::public."Role";
+  ELSE
+    v_meta := NULLIF(trim(u.raw_app_meta_data->>'role'), '');
+    IF v_meta IN ('TELECONSEILLER', 'SUPERVISEUR', 'ADMIN') THEN
+      v_role := v_meta::public."Role";
+    END IF;
   END IF;
 
   INSERT INTO public."User" (id, email, name, role, "createdAt", "updatedAt", active, "deletedAt")
@@ -391,6 +412,65 @@ END;
 $$;
 
 GRANT EXECUTE ON FUNCTION public.ensure_user_row() TO authenticated;
+
+-- ============================================================
+-- 9c. RPC: upgrade public."User".role from auth metadata (one-way)
+--
+-- Fixes accounts where public."User" was created with default TELECONSEILLER
+-- but raw_user_meta_data / raw_app_meta_data on auth.users still carries
+-- ADMIN or SUPERVISEUR (common after ensure_user_row() or a failed trigger).
+-- Only *promotes* role (never demotes) so normal admin demotions stay in DB.
+-- ============================================================
+DROP FUNCTION IF EXISTS public.sync_my_role_from_auth();
+
+CREATE OR REPLACE FUNCTION public.sync_my_role_from_auth()
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, auth, pg_temp
+AS $$
+DECLARE
+  aid uuid := auth.uid();
+  au record;
+  v_meta text;
+  v_meta_role public."Role";
+  cur_role public."Role";
+  r_meta int;
+  r_cur int;
+BEGIN
+  IF aid IS NULL THEN
+    RETURN;
+  END IF;
+
+  SELECT role INTO cur_role FROM public."User" WHERE id = aid;
+  IF NOT FOUND THEN
+    RETURN;
+  END IF;
+
+  SELECT raw_user_meta_data, raw_app_meta_data INTO au FROM auth.users WHERE id = aid;
+  IF NOT FOUND THEN
+    RETURN;
+  END IF;
+
+  v_meta := NULLIF(trim(au.raw_user_meta_data->>'role'), '');
+  IF v_meta NOT IN ('TELECONSEILLER', 'SUPERVISEUR', 'ADMIN') THEN
+    v_meta := NULLIF(trim(au.raw_app_meta_data->>'role'), '');
+  END IF;
+  IF v_meta NOT IN ('TELECONSEILLER', 'SUPERVISEUR', 'ADMIN') THEN
+    RETURN;
+  END IF;
+
+  v_meta_role := v_meta::public."Role";
+  r_meta := CASE v_meta_role WHEN 'ADMIN' THEN 3 WHEN 'SUPERVISEUR' THEN 2 ELSE 1 END;
+  r_cur  := CASE cur_role WHEN 'ADMIN' THEN 3 WHEN 'SUPERVISEUR' THEN 2 ELSE 1 END;
+
+  IF r_meta > r_cur THEN
+    UPDATE public."User" SET role = v_meta_role, "updatedAt" = now() WHERE id = aid;
+  END IF;
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.sync_my_role_from_auth() TO authenticated;
 
 -- ============================================================
 -- 10. RPC: validate or reject a report + create notification

@@ -41,6 +41,16 @@ async function fetchProfile(userId: string): Promise<AuthUser | null> {
         diag.warn("auth", "fetchProfile: still no row after ensure_user_row (run migration SQL?)");
       }
     }
+    // If public."User".role was wrongly defaulted (e.g. TELECONSEILLER) but
+    // auth.users metadata still says ADMIN/SUPERVISEUR, upgrade in DB once.
+    if (profile) {
+      const { error: syncErr } = await supabase.rpc("sync_my_role_from_auth");
+      if (syncErr) diag.warn("auth", "sync_my_role_from_auth RPC failed (non-fatal)", syncErr);
+      else {
+        const again = await readOnce();
+        if (again) profile = again;
+      }
+    }
     return profile;
   } catch (err) {
     const ms = Math.round(performance.now() - start);
