@@ -117,6 +117,25 @@ GRANT EXECUTE ON FUNCTION public.current_user_role() TO authenticated;
 -- ============================================================
 ALTER TABLE public."User" DROP CONSTRAINT IF EXISTS "User_id_fkey";
 
+-- Ensure DailyReport.id is generated when clients omit it. Some legacy
+-- deployments have id NOT NULL without a default, which makes inserts fail
+-- with "null value in column id".
+DO $$
+DECLARE v_id_type text;
+BEGIN
+  SELECT data_type INTO v_id_type
+  FROM information_schema.columns
+  WHERE table_schema = 'public'
+    AND table_name = 'DailyReport'
+    AND column_name = 'id';
+
+  IF v_id_type = 'uuid' THEN
+    ALTER TABLE public."DailyReport" ALTER COLUMN id SET DEFAULT gen_random_uuid();
+  ELSE
+    ALTER TABLE public."DailyReport" ALTER COLUMN id SET DEFAULT gen_random_uuid()::text;
+  END IF;
+END $$;
+
 -- ============================================================
 -- 4. Enable RLS on all tables
 -- ============================================================

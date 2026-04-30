@@ -264,19 +264,36 @@ export async function upsertReport(reportData: {
   observations?: string;
 }): Promise<{ id: string }> {
   const user = await requireUser();
+  const payload = {
+    ...reportData,
+    userId: user.id,
+    status: "DRAFT",
+  };
 
-  const { data, error } = await supabase
+  const existing = await supabase
     .from("DailyReport")
-    .upsert(
-      {
-        ...reportData,
-        userId: user.id,
-        status: "DRAFT",
-      },
-      { onConflict: "date,campaignId,userId" },
-    )
     .select("id")
-    .single();
+    .eq("date", reportData.date)
+    .eq("campaignId", reportData.campaignId)
+    .eq("userId", user.id)
+    .maybeSingle();
+
+  if (existing.error) fail(existing.error, "Impossible de vérifier le rapport existant");
+
+  const write = existing.data?.id
+    ? await supabase
+      .from("DailyReport")
+      .update(payload)
+      .eq("id", existing.data.id)
+      .select("id")
+      .single()
+    : await supabase
+      .from("DailyReport")
+      .insert({ id: crypto.randomUUID(), ...payload })
+      .select("id")
+      .single();
+
+  const { data, error } = write;
   if (error) {
     const msg = (error.message || "").toLowerCase();
     if (error.code === "42501" || msg.includes("row-level security") || msg.includes("rls")) {
