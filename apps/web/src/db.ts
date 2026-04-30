@@ -277,7 +277,15 @@ export async function upsertReport(reportData: {
     )
     .select("id")
     .single();
-  if (error) fail(error, "Impossible d'enregistrer le rapport");
+  if (error) {
+    const msg = (error.message || "").toLowerCase();
+    if (error.code === "42501" || msg.includes("row-level security") || msg.includes("rls")) {
+      throw new Error(
+        "Vous ne pouvez enregistrer un rapport que sur une campagne qui vous est assignée.",
+      );
+    }
+    fail(error, "Impossible d'enregistrer le rapport");
+  }
   return data!;
 }
 

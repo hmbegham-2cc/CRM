@@ -552,7 +552,9 @@ BEGIN
     RETURN jsonb_build_object('error', 'Rapport introuvable ou action non autorisée');
   END IF;
 
-  -- Sanity checks: numbers must be >= 0 and date can't be in the future
+  -- Sanity checks: numbers must be >= 0. The UI may allow entering a report
+  -- ahead of time for planning/backfill workflows, so we do not reject future
+  -- dates here.
   IF v_report."incomingTotal" < 0
      OR v_report."outgoingTotal" < 0
      OR v_report."handled" < 0
@@ -560,10 +562,6 @@ BEGIN
      OR v_report."rdvTotal" < 0
      OR v_report."smsTotal" < 0 THEN
     RETURN jsonb_build_object('error', 'Les valeurs ne peuvent pas être négatives');
-  END IF;
-
-  IF v_report.date > CURRENT_DATE THEN
-    RETURN jsonb_build_object('error', 'La date du rapport ne peut pas être dans le futur');
   END IF;
 
   -- Forbid resubmitting an already validated report

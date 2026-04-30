@@ -201,30 +201,25 @@ export function RapportPage() {
   useEffect(() => {
     getCampaigns()
       .then((all) => {
-        if (user?.role === "SUPERVISEUR") {
-          setCampaigns(all.filter((c: any) => (c.members || []).some((m: any) => m.user?.id === user.id)));
-        } else {
-          setCampaigns(all);
-        }
+        const visibleCampaigns = user?.role === "ADMIN"
+          ? all
+          : all.filter((c: any) => (c.members || []).some((m: any) => m.user?.id === user?.id));
+        setCampaigns(visibleCampaigns);
+        setCampaignId((current) => {
+          if (current && visibleCampaigns.some((c) => c.id === current)) return current;
+          return visibleCampaigns.length === 1 ? visibleCampaigns[0].id : "";
+        });
       })
       .catch((err) => {
         console.error("[Rapport] getCampaigns failed", err);
         toast.error(err?.message || "Impossible de charger les campagnes");
       });
-  }, [user]);
+  }, [user?.id, user?.role]);
 
   const [busy, run] = useAsync();
 
   async function save(submit = false) {
     setMessage("");
-    // Client-side validation: server validates again in submit_report RPC
-    const today = new Date(); today.setHours(0, 0, 0, 0);
-    const reportDate = new Date(date);
-    if (reportDate > today) {
-      const msg = "La date du rapport ne peut pas être dans le futur";
-      toast.error(msg); setMessage("Erreur : " + msg);
-      return;
-    }
     if ([state.incomingTotal, state.outgoingTotal, state.handled, state.missed,
          state.rdvTotal, state.smsTotal].some((n) => n < 0)) {
       const msg = "Les valeurs ne peuvent pas être négatives";
