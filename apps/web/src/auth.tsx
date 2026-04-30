@@ -12,14 +12,32 @@ interface AuthCtx {
 
 const AuthContext = createContext<AuthCtx | undefined>(undefined);
 
+const AUTH_OPERATION_TIMEOUT_MS = 12_000;
+
+function withAuthTimeout<T>(name: string, promise: PromiseLike<T>): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      reject(new DOMException(`Opération auth trop longue: ${name}`, "TimeoutError"));
+    }, AUTH_OPERATION_TIMEOUT_MS);
+  });
+
+  return Promise.race([Promise.resolve(promise), timeout]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
+}
+
 async function fetchProfile(userId: string): Promise<AuthUser | null> {
   const start = performance.now();
   const readOnce = async (): Promise<AuthUser | null> => {
-    const { data, error } = await supabase
-      .from("User")
-      .select("id, email, name, role")
-      .eq("id", userId)
-      .maybeSingle();
+    const { data, error } = await withAuthTimeout(
+      "fetchProfile.readUser",
+      supabase
+        .from("User")
+        .select("id, email, name, role")
+        .eq("id", userId)
+        .maybeSingle(),
+    );
     const ms = Math.round(performance.now() - start);
     if (error) {
       diag.error("auth", `fetchProfile failed in ${ms}ms`, error);
@@ -34,7 +52,10 @@ async function fetchProfile(userId: string): Promise<AuthUser | null> {
     let profile = await readOnce();
     if (!profile) {
       diag.warn("auth", `fetchProfile: no User row for id=${userId} — calling ensure_user_row()`);
-      const { error: rpcErr } = await supabase.rpc("ensure_user_row");
+      const { error: rpcErr } = await withAuthTimeout(
+        "fetchProfile.ensure_user_row",
+        supabase.rpc("ensure_user_row"),
+      );
       if (rpcErr) diag.error("auth", "ensure_user_row RPC failed", rpcErr);
       else profile = await readOnce();
       if (!profile) {
@@ -44,7 +65,10 @@ async function fetchProfile(userId: string): Promise<AuthUser | null> {
     // If public."User".role was wrongly defaulted (e.g. TELECONSEILLER) but
     // auth.users metadata still says ADMIN/SUPERVISEUR, upgrade in DB once.
     if (profile) {
-      const { error: syncErr } = await supabase.rpc("sync_my_role_from_auth");
+      const { error: syncErr } = await withAuthTimeout(
+        "fetchProfile.sync_my_role_from_auth",
+        supabase.rpc("sync_my_role_from_auth"),
+      );
       if (syncErr) diag.warn("auth", "sync_my_role_from_auth RPC failed (non-fatal)", syncErr);
       else {
         const again = await readOnce();

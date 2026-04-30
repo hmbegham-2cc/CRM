@@ -8,15 +8,35 @@ function fail(error: { message?: string } | null | undefined, fallback: string):
   throw new Error(error?.message || fallback);
 }
 
+const DATA_OPERATION_TIMEOUT_MS = 25_000;
+
+function withOperationTimeout<T>(name: string, promise: Promise<T>): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      reject(new DOMException(`Opération DB trop longue: ${name}`, "TimeoutError"));
+    }, DATA_OPERATION_TIMEOUT_MS);
+  });
+
+  return Promise.race([promise, timeout]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
+}
+
 /**
  * Wraps a data-access promise so every call gets logged with its name and
  * duration. Network admins / support can grep the console for `[CRC db]`.
+ *
+ * Important: the custom fetch timeout in supabase.ts only starts once the
+ * browser fetch() is called. Supabase can occasionally wait before that
+ * (session/token queue, browser wake-up, extension interference), which left
+ * screens stuck on "Chargement...". This timeout caps the whole DB operation.
  */
 async function track<T>(name: string, fn: () => Promise<T>): Promise<T> {
   const start = performance.now();
   diag.info("db", `→ ${name}`);
   try {
-    const out = await fn();
+    const out = await withOperationTimeout(name, fn());
     const ms = Math.round(performance.now() - start);
     diag.info("db", `✓ ${name} (${ms}ms)`);
     return out;
