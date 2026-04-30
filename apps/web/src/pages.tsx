@@ -2302,29 +2302,27 @@ export function SetupPasswordPage() {
 
   useEffect(() => {
     let mounted = true;
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
 
     async function checkSession() {
       try {
         const { data: { session } } = await supabase.auth.getSession();
         if (!mounted) return;
-        
+
         if (session) {
-          console.log("[SetupPassword] Session found");
           setSessionReady(true);
           setLoading(false);
         } else {
-          // If no session immediately, wait a bit for SDK hash processing
-          const timeout = setTimeout(async () => {
-            const { data: { s2 } } = await supabase.auth.getSession() as any;
+          timeoutId = setTimeout(async () => {
+            const { data: { session: s2 } } = await supabase.auth.getSession();
             if (!mounted) return;
-            if (s2 || session) {
+            if (s2) {
               setSessionReady(true);
             } else {
               setMsg("Lien invalide ou expiré. Veuillez demander une nouvelle invitation.");
             }
             setLoading(false);
           }, 2000);
-          return () => clearTimeout(timeout);
         }
       } catch (err) {
         console.error("[SetupPassword] Error checking session:", err);
@@ -2335,8 +2333,7 @@ export function SetupPasswordPage() {
       }
     }
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
-      console.log("[SetupPassword] Auth event:", event, !!session);
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       if (!mounted) return;
       if (session) {
         setSessionReady(true);
@@ -2349,6 +2346,7 @@ export function SetupPasswordPage() {
 
     return () => {
       mounted = false;
+      if (timeoutId) clearTimeout(timeoutId);
       subscription.unsubscribe();
     };
   }, []);
@@ -2363,15 +2361,14 @@ export function SetupPasswordPage() {
     if (password !== confirm) return setMsg("Erreur : les mots de passe ne correspondent pas");
     run(async () => {
       try {
-        const { error } = await supabase.auth.updateUser({ password: password });
-        if (error) throw error;
-
-        setMsg("Succès ! Redirection...");
-        toast.success("Mot de passe configuré");
-        setTimeout(() => navigate("/"), 1500);
+        await setupPassword(password);
+        setMsg("Compte configuré ! Redirection…");
+        toast.success("Mot de passe configuré — bienvenue !");
+        navigate("/", { replace: true });
       } catch (err: any) {
         console.error("[SetupPassword] Error:", err);
         setMsg("Erreur : " + (err.message || "Lien expiré ou invalide"));
+        toast.error(err.message || "Échec");
       }
     });
   };

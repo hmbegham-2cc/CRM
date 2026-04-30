@@ -84,8 +84,22 @@ serve(async (req) => {
       throw new Error("Échec de la génération du lien d'invitation");
     }
 
-    // 5. Ensure public.User has the right name + role (the trigger may use defaults)
-    await supabase.from("User").update({ name: trimmedName, role }).eq("id", userId);
+    // 5. Ensure public.User exists with the right name + role.
+    //    generateLink creates auth.users (trigger *should* insert public.User)
+    //    but if the trigger was never deployed, UPDATE touches 0 rows and the
+    //    invited user can never log in. Upsert fixes both cases.
+    const { error: userErr } = await supabase.from("User").upsert(
+      {
+        id: userId,
+        email,
+        name: trimmedName,
+        role,
+        active: true,
+        deletedAt: null,
+      },
+      { onConflict: "id" },
+    );
+    if (userErr) throw userErr;
 
     // 6. Send the invite email via Brevo (single email — no duplicates)
     if (!BREVO_API_KEY) {

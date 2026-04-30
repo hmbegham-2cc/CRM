@@ -393,9 +393,19 @@ export async function changePassword(currentPassword: string, newPassword: strin
   if (error) fail(error, "Impossible de modifier le mot de passe");
 }
 
+export async function ensureUserRow(): Promise<void> {
+  return track("ensureUserRow", async () => {
+    const { error } = await supabase.rpc("ensure_user_row");
+    if (error) fail(error, "Impossible de synchroniser votre profil");
+  });
+}
+
 export async function setupPassword(newPassword: string) {
   const { error } = await supabase.auth.updateUser({ password: newPassword });
   if (error) fail(error, "Impossible de configurer le mot de passe");
+  // After first password set, public.User may still be missing if the DB
+  // trigger never ran — repair so login / dashboard work immediately.
+  await ensureUserRow();
 }
 
 // ── Export ─────────────────────────────────────────────────

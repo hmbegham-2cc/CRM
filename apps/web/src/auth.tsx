@@ -14,7 +14,7 @@ const AuthContext = createContext<AuthCtx | undefined>(undefined);
 
 async function fetchProfile(userId: string): Promise<AuthUser | null> {
   const start = performance.now();
-  try {
+  const readOnce = async (): Promise<AuthUser | null> => {
     const { data, error } = await supabase
       .from("User")
       .select("id, email, name, role")
@@ -25,12 +25,23 @@ async function fetchProfile(userId: string): Promise<AuthUser | null> {
       diag.error("auth", `fetchProfile failed in ${ms}ms`, error);
       return null;
     }
-    if (!data) {
-      diag.warn("auth", `fetchProfile: no User row for id=${userId} (${ms}ms)`);
-      return null;
-    }
+    if (!data) return null;
     diag.info("auth", `fetchProfile ok (${ms}ms) role=${data.role}`);
     return { id: data.id, email: data.email, name: data.name, role: data.role as Role };
+  };
+
+  try {
+    let profile = await readOnce();
+    if (!profile) {
+      diag.warn("auth", `fetchProfile: no User row for id=${userId} — calling ensure_user_row()`);
+      const { error: rpcErr } = await supabase.rpc("ensure_user_row");
+      if (rpcErr) diag.error("auth", "ensure_user_row RPC failed", rpcErr);
+      else profile = await readOnce();
+      if (!profile) {
+        diag.warn("auth", "fetchProfile: still no row after ensure_user_row (run migration SQL?)");
+      }
+    }
+    return profile;
   } catch (err) {
     const ms = Math.round(performance.now() - start);
     const { category, detail } = classifyError(err);
@@ -138,8 +149,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (!trimmed.endsWith("@2cconseil.com")) {
         throw new Error("Seuls les emails @2cconseil.com sont autorisés");
       }
-      const { error } = await supabase.auth.signInWithPassword({ email: trimmed, password });
+      const { data, error } = await supabase.auth.signInWithPassword({ email: trimmed, password });
       if (error) throw new Error("Email ou mot de passe incorrect");
+      const uid = data.user?.id ?? data.session?.user?.id;
+      if (!uid) throw new Error("Session introuvable après connexion");
+      const profile = await fetchProfile(uid);
+      if (!profile) {
+        throw new Error(
+          "Votre compte existe mais le profil applicatif est absent. Exécutez la migration SQL " +
+            "(fonction ensure_user_row) sur Supabase, ou demandez à un administrateur de vous réinviter.",
+        );
+      }
+      setUser(profile);
     },
     async logout() {
       await supabase.auth.signOut();

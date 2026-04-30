@@ -331,6 +331,67 @@ CREATE TRIGGER on_auth_user_created
   AFTER INSERT ON auth.users
   FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
 
+DROP FUNCTION IF EXISTS public.ensure_user_row();
+
+-- ============================================================
+-- 9b. RPC: repair missing public."User" row (auth OK, profile absent)
+--
+-- Some projects never ran the auth trigger, or invite flow only UPDATEd
+-- a row that did not exist yet — leaving auth.users without public."User".
+-- The app then logs in (token OK) but fetchProfile returns nothing.
+-- This function inserts the missing row from auth.users + user_metadata.
+-- ============================================================
+CREATE OR REPLACE FUNCTION public.ensure_user_row()
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, auth, pg_temp
+AS $$
+DECLARE
+  aid uuid := auth.uid();
+  u record;
+  v_role public."Role";
+BEGIN
+  IF aid IS NULL THEN
+    RETURN;
+  END IF;
+
+  IF EXISTS (SELECT 1 FROM public."User" WHERE id = aid) THEN
+    RETURN;
+  END IF;
+
+  SELECT id, email, raw_user_meta_data
+    INTO u
+    FROM auth.users
+   WHERE id = aid;
+  IF NOT FOUND THEN
+    RETURN;
+  END IF;
+
+  v_role := 'TELECONSEILLER'::public."Role";
+  IF (u.raw_user_meta_data->>'role') IN ('TELECONSEILLER', 'SUPERVISEUR', 'ADMIN') THEN
+    v_role := (u.raw_user_meta_data->>'role')::public."Role";
+  END IF;
+
+  INSERT INTO public."User" (id, email, name, role, "createdAt", "updatedAt", active, "deletedAt")
+  VALUES (
+    u.id,
+    u.email,
+    COALESCE(NULLIF(trim(u.raw_user_meta_data->>'name'), ''), split_part(u.email, '@', 1)),
+    v_role,
+    now(),
+    now(),
+    true,
+    null
+  );
+EXCEPTION
+  WHEN unique_violation THEN
+    NULL;
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.ensure_user_row() TO authenticated;
+
 -- ============================================================
 -- 10. RPC: validate or reject a report + create notification
 -- ============================================================
