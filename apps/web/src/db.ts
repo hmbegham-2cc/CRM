@@ -233,12 +233,19 @@ export async function getUsers(): Promise<UserRow[]> {
 }
 
 export async function updateUserRole(userId: string, role: Role) {
-  const { data, error } = await supabase.functions.invoke("update-role", {
-    body: { userId, role },
+  // Use the admin_update_role RPC instead of the Edge Function so that
+  // (a) it works without a fresh Edge Function deployment, and
+  // (b) it also updates auth.users.app_metadata so the JWT reflects the
+  //     new role on the target user's next token refresh.
+  return track(`updateUserRole(${role})`, async () => {
+    const { data, error } = await supabase.rpc("admin_update_role", {
+      p_target_id: userId,
+      p_role: role,
+    });
+    if (error) fail(error, "Impossible de mettre à jour le rôle");
+    if (data?.error) throw new Error(data.error);
+    return data;
   });
-  if (error) await failFunction(error, "Impossible de mettre à jour le rôle");
-  if (data?.error) throw new Error(data.error);
-  return data;
 }
 
 // ── Reports ────────────────────────────────────────────────

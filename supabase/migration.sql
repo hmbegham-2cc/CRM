@@ -801,6 +801,75 @@ END;
 $$;
 
 -- ============================================================
+-- 13b. RPC: admin_update_role — role update without Edge Function
+--
+-- Updates BOTH public.User.role AND auth.users.raw_app_meta_data so that
+-- the JWT reflects the new role on the user's next token refresh.
+-- Runs as SECURITY DEFINER (postgres role) to access auth.users.
+-- ============================================================
+DROP FUNCTION IF EXISTS public.admin_update_role(UUID, TEXT);
+CREATE OR REPLACE FUNCTION public.admin_update_role(
+  p_target_id UUID,
+  p_role       TEXT
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, auth, pg_temp
+AS $$
+DECLARE
+  v_caller_role public."Role";
+  v_target_role public."Role";
+  v_admin_count INT;
+BEGIN
+  v_caller_role := public.current_user_role();
+
+  IF v_caller_role NOT IN ('ADMIN', 'COACH_QUALITE') THEN
+    RETURN jsonb_build_object('error', 'Accès refusé : admin ou coach qualité uniquement');
+  END IF;
+
+  IF p_role NOT IN ('TELECONSEILLER', 'SUPERVISEUR', 'ADMIN', 'COACH_QUALITE') THEN
+    RETURN jsonb_build_object('error', 'Rôle invalide');
+  END IF;
+
+  -- COACH_QUALITE can only assign TELECONSEILLER or SUPERVISEUR
+  IF v_caller_role = 'COACH_QUALITE' AND p_role NOT IN ('TELECONSEILLER', 'SUPERVISEUR') THEN
+    RETURN jsonb_build_object('error', 'Le Coach Qualité ne peut attribuer que Téléconseiller et Superviseur');
+  END IF;
+
+  -- Prevent demoting the last admin
+  IF p_role <> 'ADMIN' THEN
+    SELECT role INTO v_target_role FROM public."User" WHERE id = p_target_id;
+    IF v_target_role = 'ADMIN' THEN
+      SELECT COUNT(*) INTO v_admin_count
+        FROM public."User"
+       WHERE role = 'ADMIN'::public."Role" AND "deletedAt" IS NULL;
+      IF v_admin_count <= 1 THEN
+        RETURN jsonb_build_object('error', 'Impossible de retirer le dernier administrateur');
+      END IF;
+    END IF;
+  END IF;
+
+  -- Update the public profile
+  UPDATE public."User"
+     SET role      = p_role::public."Role",
+         "updatedAt" = now()
+   WHERE id = p_target_id;
+
+  -- Sync into auth.users app_metadata so JWT gets the new role on next refresh
+  UPDATE auth.users
+     SET raw_app_meta_data =
+           COALESCE(raw_app_meta_data, '{}'::jsonb) ||
+           jsonb_build_object('role', p_role)
+   WHERE id = p_target_id;
+
+  RETURN jsonb_build_object('ok', true);
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.admin_update_role(UUID, TEXT) TO authenticated;
+
+-- ============================================================
 -- 14. Grants on RPC functions
 -- ============================================================
 GRANT EXECUTE ON FUNCTION public.action_report(TEXT, TEXT, UUID, TEXT) TO authenticated;
