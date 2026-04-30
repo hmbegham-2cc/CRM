@@ -854,27 +854,25 @@ export function DashboardPage() {
   const COLORS = ['#ef4444', '#1e293b', '#3b82f6', '#10b981', '#f59e0b', '#6366f1'];
 
   return (
-    <div ref={dashboardRef} style={{ padding: "4px" }}>
+    <div ref={dashboardRef} className="dashboard-page">
       <div className="card">
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "24px" }}>
+        <div className="dashboard-header">
           <div>
-            <div style={{ display: "flex", alignItems: "center", gap: "12px", marginBottom: "4px" }}>
+            <div className="dashboard-title-row">
               <h2 style={{ margin: 0 }}>
                 {viewMode === 'PERSONAL' ? 'Mon Dashboard Personnel' : 'Tableau de bord Équipe'}
               </h2>
               {(user?.role === 'SUPERVISEUR' || user?.role === 'ADMIN') && (
-                <div style={{ display: "flex", background: "#f1f5f9", padding: "4px", borderRadius: "8px", gap: "4px" }}>
+                <div className="view-toggle">
                   <button 
                     onClick={() => { setViewMode('TEAM'); loadData(pendingCampaignId, pendingDateFrom, pendingDateTo, pendingUserId, 'TEAM'); }}
                     className={`btn ${viewMode === 'TEAM' ? 'btn-primary' : ''}`}
-                    style={{ padding: "6px 12px", fontSize: "12px", height: "auto" }}
                   >
                     Vue Équipe
                   </button>
                   <button 
                     onClick={() => { setViewMode('PERSONAL'); loadData(pendingCampaignId, pendingDateFrom, pendingDateTo, "", 'PERSONAL'); }}
                     className={`btn ${viewMode === 'PERSONAL' ? 'btn-primary' : ''}`}
-                    style={{ padding: "6px 12px", fontSize: "12px", height: "auto" }}
                   >
                     Ma Performance
                   </button>
@@ -888,7 +886,7 @@ export function DashboardPage() {
               {dateFrom && dateTo && ` (Comparé à la période précédente)`}
             </p>
           </div>
-          <div style={{ display: "flex", gap: "12px" }}>
+          <div className="dashboard-actions">
             <button className="btn btn-secondary" onClick={handleExportPDF} title="Télécharger en PDF">
               <Download size={18} />
               PDF
@@ -899,7 +897,7 @@ export function DashboardPage() {
           </div>
         </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "16px", alignItems: "flex-end" }}>
+        <div className="dashboard-filters">
           <div className="field" style={{ marginBottom: 0 }}>
             <label className="label" htmlFor="dashboard-campaign">
               <Filter size={14} style={{ marginRight: 6 }} />
@@ -940,7 +938,7 @@ export function DashboardPage() {
             <input id="date-to" type="date" className="input" value={pendingDateTo} onChange={(e) => setPendingDateTo(e.target.value)} />
           </div>
 
-          <button className="btn btn-primary" onClick={handleApplyFilters} style={{ height: "42px" }}>
+          <button className="btn btn-primary" onClick={handleApplyFilters}>
             <Search size={18} />
             Appliquer les filtres
           </button>
@@ -1027,10 +1025,10 @@ export function DashboardPage() {
         </div>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(350px, 1fr))", gap: "24px", marginBottom: "24px" }}>
+      <div className="dashboard-charts">
         {/* Graphique 1: Activité des appels */}
-        <div className="card" style={{ margin: 0 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "20px" }}>
+        <div className="card chart-card">
+          <div className="chart-title">
             <BarChart3 size={20} color="var(--primary)" />
             <h3 style={{ margin: 0 }}>Répartition des appels</h3>
           </div>
@@ -1053,8 +1051,8 @@ export function DashboardPage() {
 
         {/* Graphique 2: Répartition par Campagne (PieChart) */}
         {viewMode === 'TEAM' && !campaignId && campaignStatsData.length > 0 && (
-          <div className="card" style={{ margin: 0 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "20px" }}>
+          <div className="card chart-card">
+            <div className="chart-title">
               <Target size={20} color="var(--primary)" />
               <h3 style={{ margin: 0 }}>Volume par Campagne</h3>
             </div>
@@ -1086,8 +1084,8 @@ export function DashboardPage() {
         )}
 
         {/* Graphique 3: Performance RDV */}
-        <div className="card" style={{ margin: 0 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "20px" }}>
+        <div className="card chart-card">
+          <div className="chart-title">
             <ClipboardCheck size={20} color="var(--success)" />
             <h3 style={{ margin: 0 }}>Performance Rendez-vous</h3>
           </div>
