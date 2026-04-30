@@ -136,6 +136,11 @@ BEGIN
   END IF;
 END $$;
 
+-- Ensure DailyReport timestamps are generated when clients omit them.
+ALTER TABLE public."DailyReport"
+  ALTER COLUMN "createdAt" SET DEFAULT now(),
+  ALTER COLUMN "updatedAt" SET DEFAULT now();
+
 -- ============================================================
 -- 4. Enable RLS on all tables
 -- ============================================================

@@ -264,10 +264,12 @@ export async function upsertReport(reportData: {
   observations?: string;
 }): Promise<{ id: string }> {
   const user = await requireUser();
+  const now = new Date().toISOString();
   const payload = {
     ...reportData,
     userId: user.id,
     status: "DRAFT",
+    updatedAt: now,
   };
 
   const existing = await supabase
@@ -289,7 +291,7 @@ export async function upsertReport(reportData: {
       .single()
     : await supabase
       .from("DailyReport")
-      .insert({ id: crypto.randomUUID(), ...payload })
+      .insert({ id: crypto.randomUUID(), ...payload, createdAt: now })
       .select("id")
       .single();
 
