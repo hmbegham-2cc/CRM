@@ -27,6 +27,8 @@ serve(async (req) => {
     const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const BREVO_API_KEY = Deno.env.get("BREVO_API_KEY");
     const FRONTEND_URL = Deno.env.get("FRONTEND_URL") ?? "https://crm-api-rose.vercel.app";
+    // Optional: set ALLOWED_EMAIL_DOMAIN to restrict invites to a specific domain (e.g. "2cconseil.com")
+    const ALLOWED_DOMAIN = Deno.env.get("ALLOWED_EMAIL_DOMAIN") ?? "";
 
     const supabase = createClient(SUPABASE_URL, SERVICE_ROLE);
 
@@ -50,20 +52,20 @@ serve(async (req) => {
     if (!rawEmail || !name || !role) throw new Error("email, name et role requis");
     const email = String(rawEmail).toLowerCase().trim();
     const trimmedName = String(name).trim();
-    if (!email.endsWith("@2cconseil.com")) {
-      throw new Error("Seuls les emails @2cconseil.com sont autorisés");
+    if (ALLOWED_DOMAIN && !email.endsWith(`@${ALLOWED_DOMAIN}`)) {
+      throw new Error(`Seuls les emails @${ALLOWED_DOMAIN} sont autorisés`);
     }
     if (!VALID_ROLES.includes(role)) {
       throw new Error("Rôle invalide");
     }
 
-    // 3. Check existing user
+    // 3. Check existing user (only block if NOT soft-deleted)
     const { data: existing } = await supabase
       .from("User")
-      .select("id")
+      .select("id, deletedAt")
       .eq("email", email)
       .maybeSingle();
-    if (existing) throw new Error("Cet email est déjà utilisé");
+    if (existing && !existing.deletedAt) throw new Error("Cet email est déjà utilisé");
 
     // 4. Generate invite link WITHOUT sending Supabase's default email.
     //    The `generateLink({ type: 'invite' })` call creates auth.users (and auth.identities)
