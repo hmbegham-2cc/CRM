@@ -108,7 +108,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (document.visibilityState !== "visible") return;
       const uid = lastUserIdRef.current;
       if (!uid) return;
-      diag.info("auth", "tab visible again — refreshing profile");
+      diag.info("auth", "tab visible again — refreshing session + profile");
+      // Refresh the JWT first: the SDK auto-refresh may have failed silently
+      // while the tab was backgrounded (proxy killed the connection). A
+      // manual refresh forces a brand new round-trip.
+      try {
+        await supabase.auth.refreshSession();
+      } catch (err) {
+        diag.warn("auth", "refreshSession on focus failed", err);
+      }
       const profile = await fetchProfile(uid);
       if (mounted && profile) setUser(profile);
     };

@@ -3,6 +3,7 @@ import { useState, useEffect } from "react";
 import { useAuth } from "./auth";
 import { supabase } from "./supabase";
 import { OfflineBanner } from "./components/OfflineBanner";
+import { ConnectionBanner } from "./components/ConnectionBanner";
 import {
   LayoutDashboard,
   FileEdit,
@@ -125,6 +126,7 @@ export function AppLayout() {
 
       <main className="content">
         <OfflineBanner />
+        <ConnectionBanner />
         <Outlet />
       </main>
     </div>

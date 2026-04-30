@@ -1,5 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import { diag, classifyError, networkSnapshot } from "./lib/diag";
+import { connectionHealth } from "./lib/connection-health";
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string;
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string;
@@ -14,6 +15,9 @@ if (!supabaseUrl || !supabaseAnonKey) {
 const REQUEST_TIMEOUT_MS = 20_000;
 // Warn (only) when a request is unusually slow but eventually succeeds.
 const SLOW_REQUEST_MS = 5_000;
+// Max retry attempts for idempotent GETs that fail with a stale-connection
+// type error (network-level, no response received).
+const MAX_GET_RETRIES = 2; // i.e. 1 initial + 2 retries = 3 attempts total.
 
 let reqCounter = 0;
 
@@ -89,26 +93,30 @@ function doFetch(
           networkSnapshot(),
         );
       }
+      // Even non-2xx responses count as "the network worked": we got bytes back.
+      connectionHealth.recordSuccess();
       return res;
     })
     .catch(async (err) => {
       const ms = Math.round(performance.now() - start);
       const { category, detail } = classifyError(err);
 
-      // Transient stale-connection failures: retry once for idempotent GETs.
-      // The browser will open a fresh TCP connection on the second attempt,
-      // which works around proxies that silently kill idle HTTP/2 streams.
+      // Transient stale-connection failures: retry up to MAX_GET_RETRIES times
+      // for idempotent GETs. The browser will open a fresh TCP connection on
+      // each retry, which works around proxies that silently kill idle HTTP/2
+      // streams without sending a GOAWAY frame.
       const canRetry =
-        attempt === 0 &&
+        attempt < MAX_GET_RETRIES &&
         method === "GET" &&
         isTransientNetworkError(err, false);
       if (canRetry) {
+        // Exponential backoff: 200ms, 800ms, 2000ms.
+        const delay = [200, 800, 2000][attempt] || 2000;
         diag.warn(
           "fetch",
-          `↻ ${tag} ${method} ${path} retrying after ${ms}ms — ${category}: ${detail}`,
+          `↻ ${tag} ${method} ${path} retrying in ${delay}ms (attempt ${attempt + 1}/${MAX_GET_RETRIES}) after ${ms}ms — ${category}: ${detail}`,
         );
-        // Small backoff to let the browser realize the old socket is dead.
-        await new Promise((r) => window.setTimeout(r, 200));
+        await new Promise((r) => window.setTimeout(r, delay));
         return doFetch(input, init, reqId, attempt + 1);
       }
 
@@ -117,6 +125,7 @@ function doFetch(
         `✗ ${tag} ${method} ${path} FAILED after ${ms}ms — ${category}: ${detail}`,
         { ...networkSnapshot(), errorName: (err as any)?.name, errorMessage: (err as any)?.message },
       );
+      connectionHealth.recordFailure();
       throw err;
     })
     .finally(() => window.clearTimeout(timer));
@@ -148,3 +157,38 @@ diag.info("boot", "Supabase client created", {
   timeoutMs: REQUEST_TIMEOUT_MS,
   ...networkSnapshot(),
 });
+
+// When the connection health monitor reports we're "down", proactively try
+// to refresh the auth session. A successful refresh forces Supabase to make
+// a fresh round-trip to /auth/v1/token (often via a brand new TCP+TLS
+// connection), which has the side effect of waking up / replacing whatever
+// stale state the SDK was sitting on. Heavily rate-limited.
+connectionHealth.subscribe(async (s) => {
+  if (s !== "down") return;
+  if (!connectionHealth.shouldAttemptRecovery(15_000)) return;
+  diag.warn("health", "connection down — attempting auth.refreshSession()");
+  try {
+    const { data, error } = await supabase.auth.refreshSession();
+    if (error) {
+      diag.error("health", "refreshSession failed", error);
+    } else if (data.session) {
+      diag.info("health", "refreshSession ok — token renewed");
+    }
+  } catch (err) {
+    diag.error("health", "refreshSession threw", err);
+  }
+});
+
+/**
+ * Manual recovery entry point. Pages can import this and bind it to a
+ * "Reconnecter" button so the user has an explicit way out of stuck states.
+ */
+export async function forceReconnect(): Promise<void> {
+  diag.info("health", "manual forceReconnect requested");
+  connectionHealth.reset();
+  try {
+    await supabase.auth.refreshSession();
+  } catch (err) {
+    diag.error("health", "forceReconnect: refreshSession threw", err);
+  }
+}
