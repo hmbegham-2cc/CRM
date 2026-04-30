@@ -95,6 +95,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const { category, detail } = classifyError(err);
         diag.error("auth", `getSession threw — ${category}: ${detail}`, err);
       } finally {
+        // Cancel the safety timer as soon as getSession + profile finish —
+        // otherwise it still fires 8s after mount and spams logs even after a
+        // fast login or after the user has already signed out.
+        window.clearTimeout(safety);
         if (mounted) setLoading(false);
       }
     })();
@@ -173,8 +177,32 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setUser(profile);
     },
     async logout() {
-      await supabase.auth.signOut();
-      setUser(null);
+      let lastErr: unknown = null;
+      try {
+        const { error } = await supabase.auth.signOut({ scope: "global" });
+        if (error) throw error;
+      } catch (err) {
+        lastErr = err;
+        // On flaky networks, global logout may fail even if local session can
+        // still be cleared. Fallback to local so user can always exit.
+        diag.warn("auth", "global signOut failed, retrying with local scope", err);
+        const { error: localErr } = await supabase.auth.signOut({ scope: "local" });
+        if (localErr) {
+          lastErr = localErr;
+          diag.error("auth", "local signOut failed too", localErr);
+        } else {
+          lastErr = null;
+        }
+      } finally {
+        lastUserIdRef.current = null;
+        setUser(null);
+        setLoading(false);
+      }
+      if (lastErr) {
+        // Keep UI logged out anyway; backend token revocation can be retried by
+        // signing in then out again when the connection is stable.
+        diag.warn("auth", "logout completed locally with remote signOut error", lastErr);
+      }
     },
   }), [user, loading]);
 

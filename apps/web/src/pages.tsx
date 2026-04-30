@@ -1,6 +1,11 @@
-import { useEffect, useMemo, useState, useRef, type ReactNode } from "react";
+import {
+  useEffect, useMemo, useState, useRef,
+  Children, cloneElement, isValidElement,
+  type ReactElement,
+  type ReactNode,
+} from "react";
 import { Navigate, useNavigate, useSearchParams } from "react-router-dom";
-import type { Campaign, DailyReport } from "@crc/types";
+import type { Campaign, DailyReport, Role } from "@crc/types";
 import {
   getCampaigns, createCampaign, updateCampaign, deleteCampaign,
   assignTeam, assignUserCampaigns, getUsers, updateUserRole, getReports, upsertReport,
@@ -64,7 +69,6 @@ import {
   CartesianGrid,
   Tooltip,
   Legend,
-  ResponsiveContainer,
   LineChart,
   Line,
   AreaChart,
@@ -94,43 +98,72 @@ type ReportFormState = {
   observations: string;
 };
 
+/**
+ * Recharts' ResponsiveContainer often reads parent size as -1 when the chart
+ * sits inside a CSS grid / flex item without a stable width. We measure the
+ * host with ResizeObserver and pass explicit width/height to the chart instead.
+ */
 function StableResponsiveChart({ children }: { children: ReactNode }) {
   const hostRef = useRef<HTMLDivElement>(null);
-  const [ready, setReady] = useState(false);
+  const [dims, setDims] = useState({ w: 0, h: 300 });
 
   useEffect(() => {
     const host = hostRef.current;
     if (!host) return;
 
-    const update = () => {
+    const measure = () => {
       const rect = host.getBoundingClientRect();
-      setReady(rect.width > 0 && rect.height > 0);
+      const w = Math.floor(rect.width);
+      const h = Math.max(260, Math.floor(rect.height) || 300);
+      if (w >= 120) setDims({ w, h });
     };
 
-    update();
-    let raf = window.requestAnimationFrame(update);
-    const timer = window.setTimeout(update, 60);
+    measure();
+    let innerRaf = 0;
+    const outerRaf = requestAnimationFrame(() => {
+      innerRaf = requestAnimationFrame(measure);
+    });
+    const timer = window.setTimeout(measure, 120);
 
     let ro: ResizeObserver | null = null;
     if (typeof ResizeObserver !== "undefined") {
-      ro = new ResizeObserver(update);
+      ro = new ResizeObserver(measure);
       ro.observe(host);
     }
 
     return () => {
-      if (raf) window.cancelAnimationFrame(raf);
+      cancelAnimationFrame(outerRaf);
+      cancelAnimationFrame(innerRaf);
       window.clearTimeout(timer);
       ro?.disconnect();
     };
   }, []);
 
+  let chart: ReactNode = null;
+  try {
+    const only = Children.only(children);
+    if (isValidElement(only) && dims.w > 0) {
+      chart = cloneElement(only as ReactElement<{ width?: number; height?: number }>, {
+        width: dims.w,
+        height: dims.h,
+      });
+    }
+  } catch {
+    chart = children;
+  }
+
   return (
-    <div ref={hostRef} style={{ width: "100%", height: 300, minWidth: 0, minHeight: 280 }}>
-      {ready ? (
-        <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={280}>
-          {children}
-        </ResponsiveContainer>
-      ) : null}
+    <div
+      ref={hostRef}
+      style={{
+        width: "100%",
+        height: 300,
+        minWidth: 0,
+        minHeight: 280,
+        position: "relative",
+      }}
+    >
+      {chart}
     </div>
   );
 }
@@ -605,9 +638,7 @@ export function ValidationPage() {
 
 export function DashboardPage() {
   const { user } = useAuth();
-  const [viewMode, setViewMode] = useState<'PERSONAL' | 'TEAM'>(
-    user?.role === 'TELECONSEILLER' ? 'PERSONAL' : 'TEAM'
-  );
+  const [viewMode, setViewMode] = useState<'PERSONAL' | 'TEAM'>('TEAM');
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [users, setUsers] = useState<UserRow[]>([]);
   const [campaignId, setCampaignId] = useState("");
@@ -624,6 +655,7 @@ export function DashboardPage() {
   const [prevReports, setPrevReports] = useState<DailyReport[]>([]);
   const [loading, setLoading] = useState(false);
   const dashboardRef = useRef<HTMLDivElement>(null);
+  const initializedRef = useRef(false);
 
   useEffect(() => {
     getCampaigns()
@@ -645,7 +677,18 @@ export function DashboardPage() {
         ...(mode === 'TEAM' ? { status: 'VALIDATED' } : {})
       };
       
-      const currentData = await getReports(currentParams);
+      let currentData = await getReports(currentParams);
+      // If team mode has no validated rows (common on fresh environments),
+      // fall back to all statuses so the dashboard still shows activity.
+      if (mode === 'TEAM' && currentData.length === 0) {
+        const fallbackParams = {
+          ...(cid ? { campaignId: cid } : {}),
+          ...(from ? { dateFrom: from } : {}),
+          ...(to ? { dateTo: to } : {}),
+          ...(uid ? { userId: uid } : {}),
+        };
+        currentData = await getReports(fallbackParams);
+      }
       setReports(currentData);
 
       // Calcul de la période précédente pour les tendances
@@ -675,10 +718,17 @@ export function DashboardPage() {
     }
   };
 
-  // Chargement initial (30 derniers jours par défaut pour avoir des tendances)
+  // Chargement initial (attendre le profil pour éviter un mode de vue incohérent)
   useEffect(() => {
+    if (!user?.id) return;
+    if (initializedRef.current) return;
+    initializedRef.current = true;
+
+    const initialMode: 'PERSONAL' | 'TEAM' =
+      user.role === 'TELECONSEILLER' ? 'PERSONAL' : 'TEAM';
     const to = new Date().toISOString().split('T')[0];
     const from = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+    setViewMode(initialMode);
     setPendingDateFrom(from);
     setPendingDateTo(to);
     setPendingUserId("");
@@ -686,8 +736,8 @@ export function DashboardPage() {
     setDateFrom(from);
     setDateTo(to);
     setUserIdFilter("");
-    loadData("", from, to, "", viewMode);
-  }, []);
+    loadData("", from, to, "", initialMode);
+  }, [user?.id, user?.role]);
 
   // Reload current filters when the tab regains focus.
   useReloadOnFocus(() => loadData(campaignId, dateFrom, dateTo, userIdFilter, viewMode));
@@ -1013,7 +1063,8 @@ export function DashboardPage() {
                     outerRadius={80}
                     paddingAngle={5}
                     dataKey="value"
-                    label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
+                    label={({ name, percent }) =>
+                      `${name} ${((percent ?? 0) * 100).toFixed(0)}%`}
                     labelLine={false}
                   >
                     {campaignStatsData.map((entry, index) => (
@@ -2055,7 +2106,7 @@ export function UtilisateursPage() {
                         onChange={(e) => run(async () => {
                           const tId = toast.loading("Mise à jour du rôle...");
                           try {
-                            await updateUserRole(u.id, e.target.value);
+                            await updateUserRole(u.id, e.target.value as Role);
                             toast.success("Rôle mis à jour", { id: tId });
                             load();
                           } catch (err: any) {
