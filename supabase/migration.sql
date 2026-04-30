@@ -467,6 +467,10 @@ GRANT EXECUTE ON FUNCTION public.set_user_active(UUID, BOOLEAN) TO authenticated
 -- ============================================================
 -- 12. RPC: assign team to campaign
 -- ============================================================
+-- Ensure CampaignMember.id is auto-generated when omitted by inserts/RPCs
+ALTER TABLE public."CampaignMember"
+  ALTER COLUMN id SET DEFAULT gen_random_uuid();
+
 DROP FUNCTION IF EXISTS public.assign_team(TEXT, TEXT[]);
 CREATE OR REPLACE FUNCTION public.assign_team(p_campaign_id TEXT, p_user_ids UUID[])
 RETURNS JSONB
@@ -481,8 +485,8 @@ BEGIN
      AND "endDate" IS NULL;
 
   IF p_user_ids IS NOT NULL AND array_length(p_user_ids, 1) IS NOT NULL THEN
-    INSERT INTO public."CampaignMember" ("campaignId", "userId")
-    SELECT p_campaign_id, unnest(p_user_ids);
+    INSERT INTO public."CampaignMember" (id, "campaignId", "userId")
+    SELECT gen_random_uuid(), p_campaign_id, unnest(p_user_ids);
   END IF;
 
   RETURN jsonb_build_object('ok', true);

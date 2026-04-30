@@ -45,7 +45,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         if (session?.user) {
           const profile = await fetchProfile(session.user.id);
           if (!mounted) return;
-          setUser(profile);
+          // Do not clear the user on transient network/profile fetch failures.
+          if (profile) setUser(profile);
         }
       } catch (err) {
         console.error("[AuthProvider.getSession]", err);
@@ -62,7 +63,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       ) {
         const profile = await fetchProfile(session.user.id);
         if (!mounted) return;
-        setUser(profile);
+        // Keep current user if profile refresh fails intermittently.
+        if (profile) setUser(profile);
       } else if (event === "SIGNED_OUT") {
         setUser(null);
       }

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useRef } from "react";
+import { useEffect, useMemo, useState, useRef, type ReactNode } from "react";
 import { Navigate, useNavigate, useSearchParams } from "react-router-dom";
 import type { Campaign, DailyReport } from "@crc/types";
 import {
@@ -10,6 +10,7 @@ import {
   resendInvite, deleteUser, setUserActive,
 } from "./db";
 import { useAuth } from "./auth";
+import { supabase } from "./supabase";
 import { useAsync } from "./hooks/useAsync";
 import { ConfirmModal } from "./components/ConfirmModal";
 import { toast } from "sonner";
@@ -90,6 +91,47 @@ type ReportFormState = {
   smsTotal: number;
   observations: string;
 };
+
+function StableResponsiveChart({ children }: { children: ReactNode }) {
+  const hostRef = useRef<HTMLDivElement>(null);
+  const [ready, setReady] = useState(false);
+
+  useEffect(() => {
+    const host = hostRef.current;
+    if (!host) return;
+
+    const update = () => {
+      const rect = host.getBoundingClientRect();
+      setReady(rect.width > 0 && rect.height > 0);
+    };
+
+    update();
+    let raf = window.requestAnimationFrame(update);
+    const timer = window.setTimeout(update, 60);
+
+    let ro: ResizeObserver | null = null;
+    if (typeof ResizeObserver !== "undefined") {
+      ro = new ResizeObserver(update);
+      ro.observe(host);
+    }
+
+    return () => {
+      if (raf) window.cancelAnimationFrame(raf);
+      window.clearTimeout(timer);
+      ro?.disconnect();
+    };
+  }, []);
+
+  return (
+    <div ref={hostRef} style={{ width: "100%", height: 300, minWidth: 0, minHeight: 280 }}>
+      {ready ? (
+        <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={280}>
+          {children}
+        </ResponsiveContainer>
+      ) : null}
+    </div>
+  );
+}
 
 export function HomePage() {
   return (
@@ -905,8 +947,7 @@ export function DashboardPage() {
             <BarChart3 size={20} color="var(--primary)" />
             <h3 style={{ margin: 0 }}>Répartition des appels</h3>
           </div>
-          <div style={{ width: "100%", height: "300px" }}>
-            <ResponsiveContainer width="100%" height="100%">
+          <StableResponsiveChart>
               <BarChart data={chartData}>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
                 <XAxis dataKey="date" stroke="#64748b" fontSize={10} tickLine={false} axisLine={false} />
@@ -920,8 +961,7 @@ export function DashboardPage() {
                 <Bar dataKey="emis" name="Émis" fill="var(--accent)" radius={[4, 4, 0, 0]} />
                 <Bar dataKey="manques" name="Manqués" fill="var(--danger)" radius={[4, 4, 0, 0]} />
               </BarChart>
-            </ResponsiveContainer>
-          </div>
+          </StableResponsiveChart>
         </div>
 
         {/* Graphique 2: Répartition par Campagne (PieChart) */}
@@ -931,8 +971,7 @@ export function DashboardPage() {
               <Target size={20} color="var(--primary)" />
               <h3 style={{ margin: 0 }}>Volume par Campagne</h3>
             </div>
-            <div style={{ width: "100%", height: "300px" }}>
-              <ResponsiveContainer width="100%" height="100%">
+            <StableResponsiveChart>
                 <PieChart>
                   <Pie
                     data={campaignStatsData}
@@ -954,8 +993,7 @@ export function DashboardPage() {
                   />
                   <Legend verticalAlign="bottom" height={36} iconType="circle" wrapperStyle={{ fontSize: '12px' }} />
                 </PieChart>
-              </ResponsiveContainer>
-            </div>
+            </StableResponsiveChart>
           </div>
         )}
 
@@ -965,8 +1003,7 @@ export function DashboardPage() {
             <ClipboardCheck size={20} color="var(--success)" />
             <h3 style={{ margin: 0 }}>Performance Rendez-vous</h3>
           </div>
-          <div style={{ width: "100%", height: "300px" }}>
-            <ResponsiveContainer width="100%" height="100%">
+          <StableResponsiveChart>
               <AreaChart data={rdvChartData}>
                 <defs>
                   <linearGradient id="colorRdv" x1="0" y1="0" x2="0" y2="1">
@@ -984,8 +1021,7 @@ export function DashboardPage() {
                 <ReferenceLine y={10} label={{ value: 'Objectif', position: 'insideRight', fill: '#ef4444', fontSize: 10, fontWeight: 700 }} stroke="#ef4444" strokeDasharray="3 3" />
                 <Area type="monotone" dataKey="rdv" name="RDV Fixés" stroke="var(--success)" fillOpacity={1} fill="url(#colorRdv)" strokeWidth={3} />
               </AreaChart>
-            </ResponsiveContainer>
-          </div>
+          </StableResponsiveChart>
         </div>
       </div>
 
@@ -1411,6 +1447,8 @@ export function EquipesPage() {
                   try {
                     await assignTeam(campaignId, selected); 
                     toast.success("Équipe mise à jour avec succès"); 
+                  } catch (err: any) {
+                    toast.error(err?.message || "Impossible d'assigner les utilisateurs à la campagne");
                   } finally {
                     setSaving(false);
                   }
