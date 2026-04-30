@@ -3,7 +3,7 @@ import { Navigate, useNavigate, useSearchParams } from "react-router-dom";
 import type { Campaign, DailyReport } from "@crc/types";
 import {
   getCampaigns, createCampaign, updateCampaign, deleteCampaign,
-  assignTeam, getUsers, updateUserRole, getReports, upsertReport,
+  assignTeam, assignUserCampaigns, getUsers, updateUserRole, getReports, upsertReport,
   submitReport, actionReport, getNotifications, markNotificationRead,
   markAllNotificationsRead, deleteNotification, deleteAllNotifications,
   inviteUser, forgotPassword, changePassword, setupPassword, exportReports,
@@ -1372,13 +1372,20 @@ export function CampagnesPage() {
   );
 }
 
+type EquipesMode = "BY_CAMPAIGN" | "BY_USER";
+
 export function EquipesPage() {
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [users, setUsers] = useState<UserRow[]>([]);
+  const [mode, setMode] = useState<EquipesMode>("BY_CAMPAIGN");
   const [campaignId, setCampaignId] = useState("");
-  const [selected, setSelected] = useState<string[]>([]);
+  const [userId, setUserId] = useState("");
+  const [selectedUsers, setSelectedUsers] = useState<string[]>([]); // mode BY_CAMPAIGN
+  const [selectedCampaigns, setSelectedCampaigns] = useState<string[]>([]); // mode BY_USER
+  const [search, setSearch] = useState("");
   const [saving, setSaving] = useState(false);
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const navigate = useNavigate();
 
   const loadEquipes = () => {
     getCampaigns()
@@ -1387,21 +1394,190 @@ export function EquipesPage() {
         console.error("[Equipes] getCampaigns failed", err);
         toast.error(err?.message || "Impossible de charger les campagnes");
       });
-    getUsers().then(setUsers).catch(() => setUsers([]));
+    getUsers().then(setUsers as any).catch(() => setUsers([]));
   };
 
   useEffect(() => { loadEquipes(); }, []);
   useReloadOnFocus(loadEquipes);
 
+  // URL param drives the initial mode/selection (deep-linkable).
   useEffect(() => {
-    const qpCampaignId = searchParams.get("campaignId");
-    if (qpCampaignId) setCampaignId(qpCampaignId);
+    const qpCampaign = searchParams.get("campaignId");
+    const qpUser = searchParams.get("userId");
+    if (qpUser) {
+      setMode("BY_USER");
+      setUserId(qpUser);
+    } else if (qpCampaign) {
+      setMode("BY_CAMPAIGN");
+      setCampaignId(qpCampaign);
+    }
   }, [searchParams]);
 
+  // Initial selection when target changes.
   useEffect(() => {
+    if (mode !== "BY_CAMPAIGN") return;
     const c = campaigns.find((x) => x.id === campaignId);
-    setSelected(c ? c.members.map((m) => m.user.id) : []);
-  }, [campaignId, campaigns]);
+    setSelectedUsers(c ? (c as any).members.map((m: any) => m.user.id) : []);
+    setSearch("");
+  }, [campaignId, campaigns, mode]);
+
+  useEffect(() => {
+    if (mode !== "BY_USER") return;
+    const userCampaigns = campaigns
+      .filter((c) => (c as any).members?.some((m: any) => m.user?.id === userId))
+      .map((c) => c.id);
+    setSelectedCampaigns(userCampaigns);
+    setSearch("");
+  }, [userId, campaigns, mode]);
+
+  // ── Dirty tracking + diff ─────────────────────────────────
+  const initialUsers = useMemo(() => {
+    if (mode !== "BY_CAMPAIGN") return new Set<string>();
+    const c = campaigns.find((x) => x.id === campaignId);
+    return new Set<string>(c ? (c as any).members.map((m: any) => m.user.id) : []);
+  }, [campaignId, campaigns, mode]);
+
+  const initialCampaigns = useMemo(() => {
+    if (mode !== "BY_USER") return new Set<string>();
+    return new Set<string>(
+      campaigns
+        .filter((c) => (c as any).members?.some((m: any) => m.user?.id === userId))
+        .map((c) => c.id),
+    );
+  }, [userId, campaigns, mode]);
+
+  const diff = useMemo(() => {
+    if (mode === "BY_CAMPAIGN") {
+      const cur = new Set(selectedUsers);
+      const added = [...cur].filter((x) => !initialUsers.has(x)).length;
+      const removed = [...initialUsers].filter((x) => !cur.has(x)).length;
+      return { added, removed };
+    }
+    const cur = new Set(selectedCampaigns);
+    const added = [...cur].filter((x) => !initialCampaigns.has(x)).length;
+    const removed = [...initialCampaigns].filter((x) => !cur.has(x)).length;
+    return { added, removed };
+  }, [mode, selectedUsers, selectedCampaigns, initialUsers, initialCampaigns]);
+
+  const isDirty = diff.added > 0 || diff.removed > 0;
+
+  // Warn before leaving with unsaved changes.
+  useEffect(() => {
+    if (!isDirty) return;
+    const handler = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, [isDirty]);
+
+  // ── Filtered + sorted list ────────────────────────────────
+  const filteredUsers = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    const base = users.filter((u) => u.active !== false);
+    const filtered = q
+      ? base.filter(
+          (u) =>
+            (u.name || "").toLowerCase().includes(q) ||
+            u.email.toLowerCase().includes(q),
+        )
+      : base;
+    // Members of the current campaign first, then alphabetical.
+    return [...filtered].sort((a, b) => {
+      const aIn = initialUsers.has(a.id) ? 0 : 1;
+      const bIn = initialUsers.has(b.id) ? 0 : 1;
+      if (aIn !== bIn) return aIn - bIn;
+      return (a.name || a.email).localeCompare(b.name || b.email);
+    });
+  }, [users, search, initialUsers]);
+
+  const filteredCampaigns = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    const base = campaigns.filter((c) => (c as any).active !== false);
+    const filtered = q ? base.filter((c) => c.name.toLowerCase().includes(q)) : base;
+    return [...filtered].sort((a, b) => {
+      const aIn = initialCampaigns.has(a.id) ? 0 : 1;
+      const bIn = initialCampaigns.has(b.id) ? 0 : 1;
+      if (aIn !== bIn) return aIn - bIn;
+      return a.name.localeCompare(b.name);
+    });
+  }, [campaigns, search, initialCampaigns]);
+
+  // ── Actions ───────────────────────────────────────────────
+  const reset = () => {
+    if (mode === "BY_CAMPAIGN") setSelectedUsers([...initialUsers]);
+    else setSelectedCampaigns([...initialCampaigns]);
+  };
+
+  const selectAll = () => {
+    if (mode === "BY_CAMPAIGN") setSelectedUsers(filteredUsers.map((u) => u.id));
+    else setSelectedCampaigns(filteredCampaigns.map((c) => c.id));
+  };
+  const selectNone = () => {
+    if (mode === "BY_CAMPAIGN") setSelectedUsers([]);
+    else setSelectedCampaigns([]);
+  };
+
+  const handleSwitchMode = (next: EquipesMode) => {
+    if (isDirty) {
+      const ok = window.confirm(
+        "Vous avez des modifications non enregistrées. Les abandonner et changer de mode ?",
+      );
+      if (!ok) return;
+    }
+    setMode(next);
+    setSearch("");
+    setSearchParams({});
+  };
+
+  const handleSelectTarget = (id: string) => {
+    if (isDirty) {
+      const ok = window.confirm(
+        "Vous avez des modifications non enregistrées. Les abandonner et changer de sélection ?",
+      );
+      if (!ok) return;
+    }
+    if (mode === "BY_CAMPAIGN") {
+      setCampaignId(id);
+      setSearchParams(id ? { campaignId: id } : {});
+    } else {
+      setUserId(id);
+      setSearchParams(id ? { userId: id } : {});
+    }
+  };
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      if (mode === "BY_CAMPAIGN") {
+        await assignTeam(campaignId, selectedUsers);
+      } else {
+        await assignUserCampaigns(userId, selectedCampaigns, campaigns);
+      }
+      toast.success(
+        `Équipe mise à jour : +${diff.added} / -${diff.removed}`,
+      );
+      // Reload to refresh the in-memory state used for diffing.
+      const next = await getCampaigns();
+      setCampaigns(next);
+    } catch (err: any) {
+      toast.error(err?.message || "Impossible d'enregistrer");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // ── Render ────────────────────────────────────────────────
+  const target =
+    mode === "BY_CAMPAIGN"
+      ? campaigns.find((c) => c.id === campaignId)
+      : users.find((u) => u.id === userId);
+
+  const list = mode === "BY_CAMPAIGN" ? filteredUsers : filteredCampaigns;
+  const selected = mode === "BY_CAMPAIGN" ? selectedUsers : selectedCampaigns;
+  const initial = mode === "BY_CAMPAIGN" ? initialUsers : initialCampaigns;
+  const setSelected = mode === "BY_CAMPAIGN" ? setSelectedUsers : setSelectedCampaigns;
 
   return (
     <div>
@@ -1416,104 +1592,330 @@ export function EquipesPage() {
       </div>
 
       <div className="card">
-        <div className="field">
-          <label className="label" htmlFor="equipes-campaign">Sélectionner une campagne</label>
-          <select id="equipes-campaign" className="select" value={campaignId} onChange={(e) => setCampaignId(e.target.value)}>
-            <option value="">Sélectionner une campagne</option>
-            {campaigns.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+        {/* Mode switcher */}
+        <div
+          style={{
+            display: "inline-flex",
+            background: "#f1f5f9",
+            padding: 4,
+            borderRadius: 10,
+            marginBottom: 20,
+          }}
+        >
+          {(
+            [
+              { id: "BY_CAMPAIGN", label: "Par campagne" },
+              { id: "BY_USER", label: "Par utilisateur" },
+            ] as { id: EquipesMode; label: string }[]
+          ).map((m) => (
+            <button
+              key={m.id}
+              type="button"
+              onClick={() => handleSwitchMode(m.id)}
+              style={{
+                padding: "8px 16px",
+                borderRadius: 8,
+                border: "none",
+                background: mode === m.id ? "white" : "transparent",
+                color: mode === m.id ? "var(--primary)" : "var(--text-muted)",
+                fontWeight: 600,
+                fontSize: 13,
+                cursor: "pointer",
+                boxShadow: mode === m.id ? "0 1px 3px rgba(0,0,0,0.1)" : "none",
+              }}
+            >
+              {m.label}
+            </button>
+          ))}
+        </div>
+
+        {/* Target picker */}
+        <div className="field" style={{ marginBottom: 16 }}>
+          <label className="label" htmlFor="equipes-target">
+            {mode === "BY_CAMPAIGN" ? "Choisir une campagne" : "Choisir un utilisateur"}
+          </label>
+          <select
+            id="equipes-target"
+            className="select"
+            value={mode === "BY_CAMPAIGN" ? campaignId : userId}
+            onChange={(e) => handleSelectTarget(e.target.value)}
+          >
+            <option value="">
+              {mode === "BY_CAMPAIGN" ? "— Sélectionner une campagne —" : "— Sélectionner un utilisateur —"}
+            </option>
+            {mode === "BY_CAMPAIGN"
+              ? campaigns.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name} ({((c as any).members || []).length})
+                  </option>
+                ))
+              : users
+                  .filter((u) => u.active !== false)
+                  .map((u) => (
+                    <option key={u.id} value={u.id}>
+                      {u.name || u.email} ({campaigns.filter((c) => (c as any).members?.some((m: any) => m.user?.id === u.id)).length})
+                    </option>
+                  ))}
           </select>
         </div>
 
-        {campaignId && (
-          <div style={{ marginTop: "24px" }}>
-            <label className="label" style={{ marginBottom: "16px", color: "var(--primary)", fontWeight: 700 }}>
-              MEMBRES DE LA CAMPAGNE
-            </label>
-            
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(350px, 1fr))", gap: "16px" }}>
-              {users.map((u) => {
-                const isSelected = selected.includes(u.id);
-                return (
-                  <div key={u.id} style={{ 
-                    display: "flex", 
-                    alignItems: "center", 
-                    justifyContent: "space-between",
-                    padding: "16px",
-                    border: "1px solid var(--border)",
-                    borderRadius: "12px",
-                    background: isSelected ? "rgba(37, 99, 235, 0.02)" : "transparent",
-                    borderColor: isSelected ? "var(--primary)" : "var(--border)",
-                    transition: "all 0.2s"
-                  }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
-                      <input 
-                        type="checkbox" 
-                        style={{ width: "18px", height: "18px" }}
-                        checked={isSelected} 
-                        onChange={() => setSelected((prev) => prev.includes(u.id) ? prev.filter((id) => id !== u.id) : [...prev, u.id])} 
-                      /> 
-                      <div>
-                        <div style={{ fontWeight: 600, fontSize: "14px" }}>{u.name ?? u.email}</div>
-                        <div className="muted" style={{ fontSize: "12px" }}>{u.email}</div>
-                      </div>
-                    </div>
-
-                    {isSelected && (
-                      <div style={{ display: "flex", alignItems: "center", gap: "8px", padding: "4px 12px", background: "#f1f5f9", borderRadius: "20px" }}>
-                        <ShieldCheck size={14} color={u.role === 'SUPERVISEUR' ? "var(--success)" : "#94a3b8"} />
-                        <select 
-                          className="select" 
-                          style={{ padding: "2px 4px", fontSize: "11px", height: "auto", width: "auto", border: "none", background: "transparent", fontWeight: 600 }}
-                          value={u.role} 
-                          onChange={async (e) => { 
-                            const tId = toast.loading("Mise à jour...");
-                            try {
-                              await updateUserRole(u.id, e.target.value); 
-                              toast.success("Rôle mis à jour", { id: tId });
-                              getUsers().then(setUsers); 
-                            } catch (err: any) {
-                              toast.error("Erreur", { id: tId });
-                            }
-                          }}
-                        >
-                          <option value="TELECONSEILLER">Conseiller</option>
-                          <option value="SUPERVISEUR">Superviseur</option>
-                        </select>
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-
-            <div style={{ marginTop: "24px", borderTop: "1px solid var(--border)", paddingTop: "24px" }}>
-              <button 
-                className="btn btn-primary" 
-                disabled={saving || !campaignId} 
-                onClick={async () => { 
-                  setSaving(true);
-                  try {
-                    await assignTeam(campaignId, selected); 
-                    toast.success("Équipe mise à jour avec succès"); 
-                  } catch (err: any) {
-                    toast.error(err?.message || "Impossible d'assigner les utilisateurs à la campagne");
-                  } finally {
-                    setSaving(false);
-                  }
+        {target && (
+          <>
+            {/* Toolbar: search + select all */}
+            <div
+              style={{
+                display: "flex",
+                gap: 12,
+                alignItems: "center",
+                flexWrap: "wrap",
+                marginBottom: 16,
+                paddingBottom: 16,
+                borderBottom: "1px solid var(--border)",
+              }}
+            >
+              <div
+                style={{
+                  flex: 1,
+                  minWidth: 240,
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  padding: "8px 12px",
+                  border: "1px solid var(--border)",
+                  borderRadius: 8,
+                  background: "white",
                 }}
               >
-                {saving ? "Enregistrement..." : "Enregistrer l'équipe"}
-              </button>
+                <Search size={16} className="muted" />
+                <input
+                  type="text"
+                  placeholder={
+                    mode === "BY_CAMPAIGN"
+                      ? "Rechercher un utilisateur (nom, email)…"
+                      : "Rechercher une campagne…"
+                  }
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  style={{
+                    border: "none",
+                    outline: "none",
+                    width: "100%",
+                    fontSize: 14,
+                    background: "transparent",
+                  }}
+                />
+              </div>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  style={{ fontSize: 12, padding: "6px 12px" }}
+                  onClick={selectAll}
+                >
+                  Tout sélectionner
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  style={{ fontSize: 12, padding: "6px 12px" }}
+                  onClick={selectNone}
+                >
+                  Aucun
+                </button>
+              </div>
+              <div className="muted" style={{ fontSize: 12, fontWeight: 600 }}>
+                {selected.length} sélectionné{selected.length !== 1 ? "s" : ""} sur {list.length}
+              </div>
             </div>
-          </div>
+
+            {/* List */}
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))",
+                gap: 12,
+              }}
+            >
+              {list.length === 0 ? (
+                <div className="muted" style={{ fontStyle: "italic", padding: 16 }}>
+                  Aucun résultat.
+                </div>
+              ) : (
+                list.map((item) => {
+                  const id = item.id;
+                  const isSelected = selected.includes(id);
+                  const wasMember = initial.has(id);
+                  const isAddition = isSelected && !wasMember;
+                  const isRemoval = !isSelected && wasMember;
+                  const label =
+                    mode === "BY_CAMPAIGN"
+                      ? (item as UserRow).name || (item as UserRow).email
+                      : (item as Campaign).name;
+                  const sublabel =
+                    mode === "BY_CAMPAIGN"
+                      ? (item as UserRow).email
+                      : `${((item as any).members || []).length} membre${((item as any).members || []).length !== 1 ? "s" : ""}`;
+
+                  return (
+                    <label
+                      key={id}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                        padding: 14,
+                        border: `1px solid ${isAddition ? "var(--success)" : isRemoval ? "var(--danger)" : isSelected ? "var(--primary)" : "var(--border)"}`,
+                        borderRadius: 12,
+                        background: isAddition
+                          ? "rgba(16, 185, 129, 0.06)"
+                          : isRemoval
+                          ? "rgba(239, 68, 68, 0.06)"
+                          : isSelected
+                          ? "rgba(37, 99, 235, 0.04)"
+                          : "white",
+                        cursor: "pointer",
+                        transition: "all 0.15s",
+                      }}
+                    >
+                      <div style={{ display: "flex", alignItems: "center", gap: 12, minWidth: 0, flex: 1 }}>
+                        <input
+                          type="checkbox"
+                          style={{ width: 18, height: 18, cursor: "pointer", flexShrink: 0 }}
+                          checked={isSelected}
+                          onChange={() =>
+                            setSelected((prev: string[]) =>
+                              prev.includes(id)
+                                ? prev.filter((x) => x !== id)
+                                : [...prev, id],
+                            )
+                          }
+                        />
+                        <div style={{ minWidth: 0, flex: 1 }}>
+                          <div
+                            style={{
+                              fontWeight: 600,
+                              fontSize: 14,
+                              whiteSpace: "nowrap",
+                              overflow: "hidden",
+                              textOverflow: "ellipsis",
+                            }}
+                          >
+                            {label}
+                          </div>
+                          <div className="muted" style={{ fontSize: 12 }}>
+                            {sublabel}
+                          </div>
+                        </div>
+                      </div>
+                      {isAddition && (
+                        <span
+                          className="badge"
+                          style={{
+                            fontSize: 10,
+                            background: "rgba(16, 185, 129, 0.15)",
+                            color: "var(--success)",
+                            fontWeight: 700,
+                          }}
+                        >
+                          + à ajouter
+                        </span>
+                      )}
+                      {isRemoval && (
+                        <span
+                          className="badge"
+                          style={{
+                            fontSize: 10,
+                            background: "rgba(239, 68, 68, 0.15)",
+                            color: "var(--danger)",
+                            fontWeight: 700,
+                          }}
+                        >
+                          − à retirer
+                        </span>
+                      )}
+                    </label>
+                  );
+                })
+              )}
+            </div>
+          </>
         )}
       </div>
+
+      {/* Sticky save bar */}
+      {target && (
+        <div
+          style={{
+            position: "sticky",
+            bottom: 16,
+            marginTop: 16,
+            background: "white",
+            border: "1px solid var(--border)",
+            borderRadius: 12,
+            boxShadow: "0 8px 24px rgba(15, 23, 42, 0.08)",
+            padding: "12px 16px",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 16,
+            flexWrap: "wrap",
+            zIndex: 10,
+          }}
+        >
+          <div style={{ fontSize: 13, fontWeight: 600 }}>
+            {isDirty ? (
+              <span>
+                Modifications en attente :
+                {diff.added > 0 && (
+                  <span style={{ color: "var(--success)", marginLeft: 8 }}>+{diff.added} ajout{diff.added > 1 ? "s" : ""}</span>
+                )}
+                {diff.removed > 0 && (
+                  <span style={{ color: "var(--danger)", marginLeft: 8 }}>−{diff.removed} retrait{diff.removed > 1 ? "s" : ""}</span>
+                )}
+              </span>
+            ) : (
+              <span className="muted">Aucune modification.</span>
+            )}
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            {mode === "BY_USER" && userId && (
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => navigate(`/utilisateurs`)}
+                style={{ fontSize: 13 }}
+              >
+                ← Utilisateurs
+              </button>
+            )}
+            <button
+              type="button"
+              className="btn btn-secondary"
+              disabled={!isDirty || saving}
+              onClick={reset}
+              style={{ fontSize: 13 }}
+            >
+              Annuler
+            </button>
+            <button
+              type="button"
+              className="btn btn-primary"
+              disabled={!isDirty || saving}
+              onClick={save}
+              style={{ fontSize: 13 }}
+            >
+              {saving ? "Enregistrement…" : "Enregistrer"}
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
 export function UtilisateursPage() {
   const { user: currentUser } = useAuth();
+  const navigate = useNavigate();
   const [users, setUsers] = useState<UserRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [showInvite, setShowInvite] = useState(false);
@@ -1683,6 +2085,15 @@ export function UtilisateursPage() {
                     </div>
 
                     <div style={{ borderTop: "1px solid #f1f5f9", paddingTop: "12px", display: "flex", flexWrap: "wrap", gap: 6 }}>
+                      <button
+                        className="btn btn-secondary"
+                        style={{ flex: "1 1 100%", fontSize: 12, padding: "8px 10px" }}
+                        onClick={() => navigate(`/equipes?userId=${u.id}`)}
+                        title="Assigner ou retirer cet utilisateur de campagnes"
+                      >
+                        <Users size={14} style={{ marginRight: 6 }} />
+                        Gérer les campagnes
+                      </button>
                       <button
                         className="btn btn-secondary"
                         style={{ flex: 1, fontSize: 11, padding: "6px 8px", minWidth: 90 }}

@@ -90,6 +90,70 @@ export async function assignTeam(campaignId: string, userIds: string[]) {
   });
 }
 
+/**
+ * Assign a single user to a set of campaigns.
+ *
+ * The underlying `assign_team(campaign, users[])` RPC overwrites the full
+ * member list of a campaign. To assign one user to multiple campaigns we
+ * therefore have to:
+ *  1. Find which campaigns the user must be added to (was not member, now is).
+ *  2. Find which campaigns the user must be removed from (was member, now isn't).
+ *  3. For each affected campaign, rebuild the full member list and call assignTeam.
+ *
+ * `allCampaigns` is the in-memory list returned by `getCampaigns()` — passing
+ * it in keeps this synchronous from the API's point of view.
+ */
+export async function assignUserCampaigns(
+  userId: string,
+  desiredCampaignIds: string[],
+  allCampaigns: Campaign[],
+): Promise<{ added: number; removed: number }> {
+  return track(
+    `assignUserCampaigns(${userId}, ${desiredCampaignIds.length} campaigns)`,
+    async () => {
+      const desired = new Set(desiredCampaignIds);
+      const toAdd: Campaign[] = [];
+      const toRemove: Campaign[] = [];
+
+      for (const c of allCampaigns) {
+        const isMember = (c as any).members?.some((m: any) => m.user?.id === userId);
+        const shouldBeMember = desired.has(c.id);
+        if (shouldBeMember && !isMember) toAdd.push(c);
+        else if (!shouldBeMember && isMember) toRemove.push(c);
+      }
+
+      const errors: string[] = [];
+
+      // Sequential calls keep RLS / DB-side validation in assign_team consistent
+      // (each call sees a stable snapshot of CampaignMember rows).
+      for (const c of toAdd) {
+        const memberIds = ((c as any).members || []).map((m: any) => m.user.id);
+        const next = Array.from(new Set([...memberIds, userId]));
+        try {
+          await assignTeam(c.id, next);
+        } catch (err: any) {
+          errors.push(`${c.name}: ${err?.message || "erreur"}`);
+        }
+      }
+      for (const c of toRemove) {
+        const memberIds = ((c as any).members || [])
+          .map((m: any) => m.user.id)
+          .filter((id: string) => id !== userId);
+        try {
+          await assignTeam(c.id, memberIds);
+        } catch (err: any) {
+          errors.push(`${c.name}: ${err?.message || "erreur"}`);
+        }
+      }
+
+      if (errors.length > 0) {
+        throw new Error(errors.join(" • "));
+      }
+      return { added: toAdd.length, removed: toRemove.length };
+    },
+  );
+}
+
 // ── Users ──────────────────────────────────────────────────
 
 type UserRow = {
