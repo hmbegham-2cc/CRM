@@ -394,7 +394,12 @@ export function MesSaisiesPage() {
   const [loading, setLoading] = useState(true);
 
   const load = () => {
-    if (!user?.id) return;
+    if (!user?.id) {
+      // On first mount, auth can still be hydrating. Avoid a stuck loader.
+      setReports([]);
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     getReports({ userId: user.id })
       .then(setReports)

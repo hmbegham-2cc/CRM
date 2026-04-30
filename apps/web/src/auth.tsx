@@ -115,13 +115,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           const profile = await fetchProfile(session.user.id);
           if (!mounted) return;
           if (profile) setUser(profile);
+          // Ensure route guards never stay blocked on "loading" after auth events.
+          setLoading(false);
         } else if (event === "SIGNED_OUT") {
           lastUserIdRef.current = null;
           setUser(null);
+          setLoading(false);
         }
       } catch (err) {
         const { category, detail } = classifyError(err);
         diag.error("auth", `onAuthStateChange threw — ${category}: ${detail}`, err);
+        setLoading(false);
       }
     });
 
