@@ -108,15 +108,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (document.visibilityState !== "visible") return;
       const uid = lastUserIdRef.current;
       if (!uid) return;
-      diag.info("auth", "tab visible again — refreshing session + profile");
-      // Refresh the JWT first: the SDK auto-refresh may have failed silently
-      // while the tab was backgrounded (proxy killed the connection). A
-      // manual refresh forces a brand new round-trip.
-      try {
-        await supabase.auth.refreshSession();
-      } catch (err) {
-        diag.warn("auth", "refreshSession on focus failed", err);
-      }
+      // We deliberately do NOT call supabase.auth.refreshSession() here.
+      // Awaiting it serializes every concurrent .from() call behind the
+      // refresh, which under poor connectivity stacks dozens of pending
+      // queries that never get dispatched (the SDK's internal queue gets
+      // wedged). With autoRefreshToken=true the SDK rotates the JWT
+      // transparently on its own; we only refresh the user profile to
+      // pick up role/name changes done by another admin while the tab
+      // was backgrounded.
+      diag.info("auth", "tab visible again — refreshing profile");
       const profile = await fetchProfile(uid);
       if (mounted && profile) setUser(profile);
     };
