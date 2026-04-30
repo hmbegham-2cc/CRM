@@ -168,12 +168,17 @@ type UserRow = {
 
 export async function getUsers(): Promise<UserRow[]> {
   return track("getUsers", async () => {
+    // Soft-deleted users (deletedAt IS NOT NULL) are excluded from every UI
+    // list. Their underlying public.User row survives so their historical
+    // reports keep resolving correctly in joins, but the admin should never
+    // see them in pickers / management screens anymore.
     const { data, error } = await supabase
       .from("User")
       .select(
         `id, name, email, role, "active", "createdAt",
          campaignMemberships:CampaignMember(id, "endDate", campaign:Campaign(name))`,
       )
+      .is("deletedAt", null)
       .order("name");
     if (error) fail(error, "Impossible de charger les utilisateurs");
     return (data || []).map((u: any) => ({

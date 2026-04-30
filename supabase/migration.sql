@@ -23,6 +23,13 @@ ALTER TABLE public."User" ADD COLUMN IF NOT EXISTS "active" BOOLEAN NOT NULL DEF
 ALTER TABLE public."User" ADD COLUMN IF NOT EXISTS "createdAt" TIMESTAMPTZ NOT NULL DEFAULT NOW();
 ALTER TABLE public."User" ADD COLUMN IF NOT EXISTS "updatedAt" TIMESTAMPTZ NOT NULL DEFAULT NOW();
 
+-- Soft-delete column. When set, the user is treated as removed by the UI but
+-- the row still exists so historical data (DailyReport rows, audit trails)
+-- keeps working. We anonymize name/email on soft-delete so the only thing
+-- left is "the user that authored these reports, no longer with us".
+ALTER TABLE public."User" ADD COLUMN IF NOT EXISTS "deletedAt" TIMESTAMPTZ NULL;
+CREATE INDEX IF NOT EXISTS "idx_User_deletedAt" ON public."User"("deletedAt");
+
 -- Remove the legacy seed admin (by email so it works at any state)
 DELETE FROM public."User" WHERE email = 'admin@2cconseil.com';
 
@@ -93,20 +100,22 @@ $$;
 GRANT EXECUTE ON FUNCTION public.current_user_role() TO authenticated;
 
 -- ============================================================
--- 3. FK public."User".id → auth.users.id ON DELETE CASCADE
--- Ensures public.User stays in sync when an auth user is deleted.
+-- 3. FK public."User".id → auth.users.id (soft-delete friendly)
+--
+-- Historically this constraint was ON DELETE CASCADE, which meant deleting
+-- the auth.users row also nuked public."User" and (via further CASCADEs)
+-- every DailyReport / Notification / CampaignMember they ever owned.
+-- That's not what we want: when an admin "deletes" a user we still need
+-- their reports to count in dashboards / exports.
+--
+-- We now drop the CASCADE entirely. Soft-delete logic in the
+-- admin-user-action Edge function:
+--   1. anonymizes name/email + sets deletedAt on public."User"
+--   2. deletes from auth.users so they can't log in anymore
+-- The public."User" row therefore survives auth deletion, keeping FK
+-- targets alive for every historical report.
 -- ============================================================
-DO $$
-BEGIN
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_constraint
-    WHERE conname = 'User_id_fkey' AND conrelid = 'public."User"'::regclass
-  ) THEN
-    ALTER TABLE public."User"
-      ADD CONSTRAINT "User_id_fkey"
-      FOREIGN KEY (id) REFERENCES auth.users(id) ON DELETE CASCADE;
-  END IF;
-END $$;
+ALTER TABLE public."User" DROP CONSTRAINT IF EXISTS "User_id_fkey";
 
 -- ============================================================
 -- 4. Enable RLS on all tables

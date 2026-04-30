@@ -148,22 +148,55 @@ serve(async (req) => {
       // Last-admin guard
       const { data: target } = await supabase
         .from("User")
-        .select("role")
+        .select("role, name, email")
         .eq("id", userId)
         .single();
       if (target?.role === "ADMIN") {
         const { count: adminCount } = await supabase
           .from("User")
           .select("id", { count: "exact", head: true })
-          .eq("role", "ADMIN");
+          .eq("role", "ADMIN")
+          .is("deletedAt", null);
         if ((adminCount ?? 0) <= 1) {
           throw new Error("Impossible de supprimer le dernier administrateur");
         }
       }
 
-      // Cascade: User_id_fkey ON DELETE CASCADE removes public.User row
-      const { error: delErr } = await supabase.auth.admin.deleteUser(userId);
-      if (delErr) throw delErr;
+      // ── Soft-delete strategy ───────────────────────────────────────
+      // The User_id_fkey CASCADE has been removed (see migration.sql), so
+      // deleting auth.users no longer wipes public."User". We:
+      //   1. Anonymize the public.User row so the user disappears from
+      //      every list while their reports remain countable.
+      //   2. Drop the user's CampaignMember rows (no point keeping someone
+      //      assigned to a campaign they can't access anymore).
+      //   3. Drop their personal Notifications.
+      //   4. Delete the auth.users entry so the email can never log in.
+      // ────────────────────────────────────────────────────────────────
+      const anonEmail = `deleted-${userId}@deleted.local`;
+
+      const { error: anonErr } = await supabase
+        .from("User")
+        .update({
+          name: "Utilisateur supprimé",
+          email: anonEmail,
+          active: false,
+          deletedAt: new Date().toISOString(),
+        })
+        .eq("id", userId);
+      if (anonErr) throw anonErr;
+
+      // CampaignMember and Notification have ON DELETE CASCADE on userId,
+      // but since public.User survives we have to clean them up ourselves.
+      await supabase.from("CampaignMember").delete().eq("userId", userId);
+      await supabase.from("Notification").delete().eq("userId", userId);
+
+      // Finally, kill the auth account so the email cannot log in anymore.
+      // Tolerate failure (the auth row may already be gone): the public.User
+      // soft-delete is what really matters for the UI.
+      const { error: authErr } = await supabase.auth.admin.deleteUser(userId);
+      if (authErr) {
+        console.error("[delete-user] auth.admin.deleteUser failed", authErr);
+      }
 
       return new Response(JSON.stringify({ ok: true }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },

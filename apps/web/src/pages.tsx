@@ -2172,12 +2172,70 @@ export function UtilisateursPage() {
         open={!!toDelete}
         title="Supprimer l'utilisateur"
         message={
-          <>
-            Le compte <strong>{toDelete?.email}</strong> et ses données associées
-            (rapports, notifications) seront <strong>définitivement supprimés</strong>.
-            Cette action est <strong>irréversible</strong>. Pour conserver l'historique,
-            préférez "Désactiver".
-          </>
+          <div style={{ display: "grid", gap: 12 }}>
+            <div>
+              Le compte <strong>{toDelete?.email}</strong> sera supprimé et anonymisé.
+              Cette action est <strong>irréversible</strong>.
+            </div>
+
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "1fr 1fr",
+                gap: 12,
+              }}
+            >
+              <div
+                style={{
+                  background: "rgba(239, 68, 68, 0.06)",
+                  border: "1px solid rgba(239, 68, 68, 0.2)",
+                  borderRadius: 8,
+                  padding: "10px 12px",
+                  fontSize: 13,
+                }}
+              >
+                <div style={{ fontWeight: 700, color: "var(--danger)", marginBottom: 6 }}>
+                  Sera supprimé
+                </div>
+                <ul style={{ margin: 0, paddingLeft: 18, lineHeight: 1.5 }}>
+                  <li>Accès au compte (plus de connexion possible)</li>
+                  <li>Nom et email (anonymisés)</li>
+                  <li>
+                    Appartenances aux campagnes
+                    {toDelete?.campaignMemberships?.length
+                      ? ` (${toDelete.campaignMemberships.length})`
+                      : ""}
+                  </li>
+                  <li>Notifications personnelles</li>
+                </ul>
+              </div>
+
+              <div
+                style={{
+                  background: "rgba(16, 185, 129, 0.06)",
+                  border: "1px solid rgba(16, 185, 129, 0.2)",
+                  borderRadius: 8,
+                  padding: "10px 12px",
+                  fontSize: 13,
+                }}
+              >
+                <div style={{ fontWeight: 700, color: "var(--success)", marginBottom: 6 }}>
+                  Sera conservé
+                </div>
+                <ul style={{ margin: 0, paddingLeft: 18, lineHeight: 1.5 }}>
+                  <li>
+                    <strong>Tous ses rapports</strong> (chiffres comptés dans le dashboard et les exports)
+                  </li>
+                  <li>L'historique des validations qu'il a faites</li>
+                  <li>L'identifiant interne (utilisé par les rapports passés)</li>
+                </ul>
+              </div>
+            </div>
+
+            <div className="muted" style={{ fontSize: 12, fontStyle: "italic" }}>
+              Pour bloquer temporairement un utilisateur sans le supprimer, préférez « Désactiver ».
+            </div>
+          </div>
         }
         confirmLabel="Supprimer définitivement"
         variant="danger"
@@ -2187,7 +2245,7 @@ export function UtilisateursPage() {
           if (!toDelete) return;
           try {
             await deleteUser(toDelete.id);
-            toast.success("Utilisateur supprimé");
+            toast.success("Utilisateur supprimé. Ses rapports sont conservés.");
             setToDelete(null);
             load();
           } catch (err: any) {
