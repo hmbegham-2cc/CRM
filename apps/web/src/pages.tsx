@@ -674,18 +674,19 @@ export function DashboardPage() {
         ...(from ? { dateFrom: from } : {}),
         ...(to ? { dateTo: to } : {}),
         ...(mode === 'PERSONAL' ? { userId: user?.id } : (uid ? { userId: uid } : {})),
-        ...(mode === 'TEAM' ? { status: 'VALIDATED' } : {})
+        ...(mode === 'TEAM' ? { status: 'VALIDATED' } : { excludeStatus: 'REJECTED' }),
       };
       
       let currentData = await getReports(currentParams);
       // If team mode has no validated rows (common on fresh environments),
-      // fall back to all statuses so the dashboard still shows activity.
+      // fall back to submitted/draft only (never include rejected).
       if (mode === 'TEAM' && currentData.length === 0) {
         const fallbackParams = {
           ...(cid ? { campaignId: cid } : {}),
           ...(from ? { dateFrom: from } : {}),
           ...(to ? { dateTo: to } : {}),
           ...(uid ? { userId: uid } : {}),
+          excludeStatus: 'REJECTED' as const,
         };
         currentData = await getReports(fallbackParams);
       }

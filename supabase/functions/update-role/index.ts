@@ -7,6 +7,8 @@ const corsHeaders = {
 };
 
 const VALID_ROLES = ["TELECONSEILLER", "SUPERVISEUR", "ADMIN", "COACH_QUALITE"] as const;
+// Roles that COACH_QUALITE is allowed to assign (cannot promote to ADMIN or COACH_QUALITE)
+const COACH_ASSIGNABLE_ROLES = ["TELECONSEILLER", "SUPERVISEUR"] as const;
 
 serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -31,13 +33,22 @@ serve(async (req) => {
       .select("role")
       .eq("id", caller.id)
       .single();
-    if (callerProfile?.role !== "ADMIN") throw new Error("Accès refusé : admin uniquement");
+
+    const callerRole = callerProfile?.role;
+    if (callerRole !== "ADMIN" && callerRole !== "COACH_QUALITE") {
+      throw new Error("Accès refusé : admin ou coach qualité uniquement");
+    }
 
     const { userId, role } = await req.json();
     if (!userId || !role) throw new Error("userId et role requis");
     if (!VALID_ROLES.includes(role)) throw new Error("Rôle invalide");
 
-    // Prevent demoting the last admin (e.g. the caller demoting himself)
+    // COACH_QUALITE can only assign TELECONSEILLER or SUPERVISEUR
+    if (callerRole === "COACH_QUALITE" && !COACH_ASSIGNABLE_ROLES.includes(role as any)) {
+      throw new Error("Le Coach Qualité ne peut attribuer que les rôles Téléconseiller et Superviseur");
+    }
+
+    // Prevent demoting the last admin
     if (role !== "ADMIN") {
       const { count: adminCount } = await supabase
         .from("User")

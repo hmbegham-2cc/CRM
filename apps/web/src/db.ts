@@ -249,6 +249,7 @@ type ReportFilters = {
   dateFrom?: string;
   dateTo?: string;
   status?: string;
+  excludeStatus?: string; // exclude a single status (e.g. "REJECTED")
 };
 
 export async function getReports(filters: ReportFilters = {}): Promise<DailyReport[]> {
@@ -266,6 +267,7 @@ export async function getReports(filters: ReportFilters = {}): Promise<DailyRepo
     if (filters.campaignId) query = query.eq("campaignId", filters.campaignId);
     if (filters.userId) query = query.eq("userId", filters.userId);
     if (filters.status) query = query.eq("status", filters.status);
+    if (filters.excludeStatus) query = query.neq("status", filters.excludeStatus);
     if (filters.dateFrom) query = query.gte("date", filters.dateFrom);
     if (filters.dateTo) query = query.lte("date", filters.dateTo);
 
