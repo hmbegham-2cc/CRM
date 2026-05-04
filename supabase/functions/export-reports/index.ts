@@ -8,7 +8,11 @@ const corsHeaders = {
 };
 
 function escapeXml(value: unknown) {
-  return String(value ?? "")
+  // Remove invalid XML control characters (0x00-0x08, 0x0B, 0x0C, 0x0E-0x1F)
+  // These can appear in user-entered observations and break the XML parser
+  const cleaned = String(value ?? "")
+    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, "");
+  return cleaned
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
@@ -42,7 +46,9 @@ function worksheet(name: string, headers: string[], rows: unknown[][], used: Set
   const safeName = escapeXml(sheetName(name, used));
   const headerRow = `<Row>${headers.map((h) => cell(h)).join("")}</Row>`;
   const dataRows = rows.map((r) => `<Row>${r.map((v) => cell(v)).join("")}</Row>`).join("");
-  return `<Worksheet ss:Name="${safeName}"><Table>${headerRow}${dataRows}</Table></Worksheet>`;
+  const colCount = Math.max(1, headers.length);
+  const rowCount = 1 + rows.length; // header + data rows
+  return `<Worksheet ss:Name="${safeName}"><Table ss:ExpandedColumnCount="${colCount}" ss:ExpandedRowCount="${rowCount}">${headerRow}${dataRows}</Table></Worksheet>`;
 }
 
 function workbookXml(sheets: string[]) {
@@ -198,7 +204,10 @@ serve(async (req) => {
     }
 
     const xml = workbookXml(sheets);
-    const body = new TextEncoder().encode(xml);
+
+    // UTF-8 BOM helps Excel correctly interpret French characters (accents)
+    const BOM = "\xEF\xBB\xBF";
+    const body = new TextEncoder().encode(BOM + xml);
 
     const label = campaignId ? `_campagne` : `_toutes_campagnes`;
     const filename = `reporting${label}_${Date.now()}.xls`;
@@ -208,6 +217,7 @@ serve(async (req) => {
         ...corsHeaders,
         "Content-Type": "application/vnd.ms-excel; charset=utf-8",
         "Content-Disposition": `attachment; filename="${filename}"`,
+        "Content-Length": String(body.byteLength),
       },
     });
   } catch (err: any) {

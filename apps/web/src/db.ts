@@ -252,6 +252,7 @@ type ReportFilters = {
   dateTo?: string;
   status?: string;
   excludeStatus?: string; // exclude a single status (e.g. "REJECTED")
+  statusIn?: string[]; // include only these statuses
 };
 
 export async function getReports(filters: ReportFilters = {}): Promise<DailyReport[]> {
@@ -264,12 +265,16 @@ export async function getReports(filters: ReportFilters = {}): Promise<DailyRepo
          campaign:Campaign(id, name),
          validatedBy:User!validatedById(id, name)`,
       )
-      .order("date", { ascending: false });
+      .order("date", { ascending: false })
+      .limit(1000); // safety cap to prevent loading excessive rows
 
     if (filters.campaignId) query = query.eq("campaignId", filters.campaignId);
     if (filters.userId) query = query.eq("userId", filters.userId);
     if (filters.status) query = query.eq("status", filters.status);
     if (filters.excludeStatus) query = query.neq("status", filters.excludeStatus);
+    if (filters.statusIn && filters.statusIn.length > 0) {
+      query = query.in("status", filters.statusIn);
+    }
     if (filters.dateFrom) query = query.gte("date", filters.dateFrom);
     if (filters.dateTo) query = query.lte("date", filters.dateTo);
 
@@ -509,17 +514,26 @@ export async function exportReports(
   dateTo?: string,
   groupBy: "campaign" | "all" = "campaign",
 ): Promise<Blob> {
-  // The export-reports Edge Function returns a binary .xlsx file.
-  // Supabase JS v2 returns a Blob for non-JSON content-types.
   const { data, error } = await supabase.functions.invoke("export-reports", {
     body: { campaignId: campaignId || null, dateFrom, dateTo, groupBy },
   });
   if (error) await failFunction(error, "Impossible d'exporter les rapports");
 
-  if (data instanceof Blob) return data;
-  if (data instanceof ArrayBuffer) return new Blob([data], { type: XLSX_MIME });
-  // Some SDK versions return the raw bytes as a plain object / Uint8Array
-  return new Blob([data as BlobPart], { type: XLS_MIME });
+  // Robustly coerce the Edge Function response into a Blob with the correct MIME type.
+  if (data instanceof Blob) {
+    // If the SDK already parsed it as a Blob but lost the MIME type, re-wrap with the correct one.
+    return data.type.includes("excel") || data.type.includes("xml")
+      ? data
+      : new Blob([data], { type: XLS_MIME });
+  }
+  if (data instanceof ArrayBuffer || data instanceof Uint8Array) {
+    return new Blob([data], { type: XLS_MIME });
+  }
+  if (typeof data === "string") {
+    return new Blob([data], { type: XLS_MIME });
+  }
+  // Fallback: try to stringify whatever we got
+  return new Blob([JSON.stringify(data)], { type: XLS_MIME });
 }
 
 // ── Cron (admin) ───────────────────────────────────────────

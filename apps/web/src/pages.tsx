@@ -656,6 +656,7 @@ export function DashboardPage() {
   const [loading, setLoading] = useState(false);
   const dashboardRef = useRef<HTMLDivElement>(null);
   const initializedRef = useRef(false);
+  const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     getCampaigns()
@@ -667,6 +668,11 @@ export function DashboardPage() {
   }, [user]);
 
   const loadData = async (cid: string, from: string, to: string, uid: string, mode: 'PERSONAL' | 'TEAM') => {
+    // Cancel any in-flight request
+    if (abortRef.current) abortRef.current.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+
     setLoading(true);
     try {
       const currentParams = {
@@ -674,30 +680,23 @@ export function DashboardPage() {
         ...(from ? { dateFrom: from } : {}),
         ...(to ? { dateTo: to } : {}),
         ...(mode === 'PERSONAL' ? { userId: user?.id } : (uid ? { userId: uid } : {})),
-        ...(mode === 'TEAM' ? { status: 'VALIDATED' } : { excludeStatus: 'REJECTED' }),
+        // TEAM: only VALIDATED + SUBMITTED (exclude DRAFT and REJECTED)
+        // PERSONAL: exclude REJECTED only (allow DRAFT so user sees their work-in-progress)
+        ...(mode === 'TEAM'
+          ? { statusIn: ['VALIDATED', 'SUBMITTED'] as any }
+          : { excludeStatus: 'REJECTED' as const }),
       };
-      
+
+      // Load current period
       let currentData = await getReports(currentParams);
-      // If team mode has no validated rows (common on fresh environments),
-      // fall back to submitted/draft only (never include rejected).
-      if (mode === 'TEAM' && currentData.length === 0) {
-        const fallbackParams = {
-          ...(cid ? { campaignId: cid } : {}),
-          ...(from ? { dateFrom: from } : {}),
-          ...(to ? { dateTo: to } : {}),
-          ...(uid ? { userId: uid } : {}),
-          excludeStatus: 'REJECTED' as const,
-        };
-        currentData = await getReports(fallbackParams);
-      }
       setReports(currentData);
 
-      // Calcul de la période précédente pour les tendances
-      if (from && to) {
+      // Only compute trends when a date range is explicitly set
+      if (from && to && !controller.signal.aborted) {
         const start = new Date(from);
         const end = new Date(to);
         const duration = end.getTime() - start.getTime();
-        
+
         const prevEnd = new Date(start.getTime() - (24 * 60 * 60 * 1000));
         const prevStart = new Date(prevEnd.getTime() - duration);
 
@@ -706,15 +705,18 @@ export function DashboardPage() {
           dateFrom: prevStart.toISOString().split('T')[0],
           dateTo: prevEnd.toISOString().split('T')[0],
         };
+        // Parallel load for previous period
         const previousData = await getReports(prevParams);
-        setPrevReports(previousData);
+        if (!controller.signal.aborted) setPrevReports(previousData);
       } else {
         setPrevReports([]);
       }
     } catch (err: any) {
+      if (err?.name === 'AbortError') return;
       console.error("Erreur lors du chargement des données du dashboard", err);
       toast.error(err?.message || "Impossible de charger les données du dashboard");
     } finally {
+      if (abortRef.current === controller) abortRef.current = null;
       setLoading(false);
     }
   };
@@ -727,17 +729,16 @@ export function DashboardPage() {
 
     const initialMode: 'PERSONAL' | 'TEAM' =
       (user.role === 'TELECONSEILLER' || user.role === 'SUPERVISEUR') ? 'PERSONAL' : 'TEAM';
-    const to = new Date().toISOString().split('T')[0];
-    const from = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+    // Default: ALL TIME (no date filter). Users can add filters manually.
     setViewMode(initialMode);
-    setPendingDateFrom(from);
-    setPendingDateTo(to);
+    setPendingDateFrom("");
+    setPendingDateTo("");
     setPendingUserId("");
     setCampaignId("");
-    setDateFrom(from);
-    setDateTo(to);
+    setDateFrom("");
+    setDateTo("");
     setUserIdFilter("");
-    loadData("", from, to, "", initialMode);
+    loadData("", "", "", "", initialMode);
   }, [user?.id, user?.role]);
 
   // Reload current filters when the tab regains focus.
@@ -3035,8 +3036,9 @@ export function ExportPage() {
       const label = campaignId
         ? campaigns.find(c => c.id === campaignId)?.name || campaignId
         : "toutes_campagnes";
-      const ext = blob.type.includes("ms-excel") ? "xls" : "xlsx";
-      a.download = `reporting_${label.replace(/\s+/g, "_")}_${dateFrom}_${dateTo}.${ext}`;
+      const ext = blob.type.includes("ms-excel") || blob.type.includes("xml") ? "xls" : "xlsx";
+      const datePart = dateFrom && dateTo ? `_${dateFrom}_${dateTo}` : "";
+      a.download = `reporting_${label.replace(/\s+/g, "_")}${datePart}.${ext}`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
