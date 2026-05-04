@@ -507,63 +507,12 @@ $$;
 GRANT EXECUTE ON FUNCTION public.ensure_user_row() TO authenticated;
 
 -- ============================================================
--- 9c. RPC: upgrade public."User".role from auth metadata (one-way)
+-- 9c. RPC: sync_my_role_from_auth — DEPRECATED and DROPPED
 --
--- Fixes accounts where public."User" was created with default TELECONSEILLER
--- but raw_user_meta_data / raw_app_meta_data on auth.users still carries
--- ADMIN or SUPERVISEUR (common after ensure_user_row() or a failed trigger).
--- Only *promotes* role (never demotes) so normal admin demotions stay in DB.
+-- This function caused role reversion issues. The update-role Edge Function
+-- now handles both DB and auth metadata synchronization correctly.
 -- ============================================================
 DROP FUNCTION IF EXISTS public.sync_my_role_from_auth();
-
-CREATE OR REPLACE FUNCTION public.sync_my_role_from_auth()
-RETURNS void
-LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path = public, auth, pg_temp
-AS $$
-DECLARE
-  aid uuid := auth.uid();
-  au record;
-  v_meta text;
-  v_meta_role public."Role";
-  cur_role public."Role";
-  r_meta int;
-  r_cur int;
-BEGIN
-  IF aid IS NULL THEN
-    RETURN;
-  END IF;
-
-  SELECT role INTO cur_role FROM public."User" WHERE id = aid;
-  IF NOT FOUND THEN
-    RETURN;
-  END IF;
-
-  SELECT raw_user_meta_data, raw_app_meta_data INTO au FROM auth.users WHERE id = aid;
-  IF NOT FOUND THEN
-    RETURN;
-  END IF;
-
-  v_meta := NULLIF(trim(au.raw_user_meta_data->>'role'), '');
-  IF v_meta NOT IN ('TELECONSEILLER', 'SUPERVISEUR', 'ADMIN', 'COACH_QUALITE') THEN
-    v_meta := NULLIF(trim(au.raw_app_meta_data->>'role'), '');
-  END IF;
-  IF v_meta NOT IN ('TELECONSEILLER', 'SUPERVISEUR', 'ADMIN', 'COACH_QUALITE') THEN
-    RETURN;
-  END IF;
-
-  v_meta_role := v_meta::public."Role";
-  r_meta := CASE v_meta_role WHEN 'ADMIN' THEN 4 WHEN 'COACH_QUALITE' THEN 3 WHEN 'SUPERVISEUR' THEN 2 ELSE 1 END;
-  r_cur  := CASE cur_role WHEN 'ADMIN' THEN 4 WHEN 'COACH_QUALITE' THEN 3 WHEN 'SUPERVISEUR' THEN 2 ELSE 1 END;
-
-  IF r_meta > r_cur THEN
-    UPDATE public."User" SET role = v_meta_role, "updatedAt" = now() WHERE id = aid;
-  END IF;
-END;
-$$;
-
-GRANT EXECUTE ON FUNCTION public.sync_my_role_from_auth() TO authenticated;
 
 -- ============================================================
 -- 10. RPC: validate or reject a report + create notification
@@ -801,73 +750,51 @@ END;
 $$;
 
 -- ============================================================
--- 13b. RPC: admin_update_role — role update without Edge Function
+-- 13b. RPC: admin_update_role — DEPRECATED and DROPPED
 --
--- Updates BOTH public.User.role AND auth.users.raw_app_meta_data so that
--- the JWT reflects the new role on the user's next token refresh.
--- Runs as SECURITY DEFINER (postgres role) to access auth.users.
+-- The update-role Edge Function now handles role updates.
+-- This RPC is no longer used by the client and has been removed.
 -- ============================================================
 DROP FUNCTION IF EXISTS public.admin_update_role(UUID, TEXT);
-CREATE OR REPLACE FUNCTION public.admin_update_role(
-  p_target_id UUID,
-  p_role       TEXT
-)
-RETURNS JSONB
+
+-- ============================================================
+-- 13c. RPC: verify_password — lightweight password verification
+--
+-- Verifies the current user's password without triggering a full
+-- signInWithPassword flow (which refreshes session and triggers
+-- auth state changes across the app).
+-- ============================================================
+DROP FUNCTION IF EXISTS public.verify_password(TEXT);
+CREATE OR REPLACE FUNCTION public.verify_password(p_password TEXT)
+RETURNS void
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public, auth, pg_temp
 AS $$
 DECLARE
-  v_caller_role public."Role";
-  v_target_role public."Role";
-  v_admin_count INT;
+  v_user_id uuid := auth.uid();
+  v_encrypted_password text;
 BEGIN
-  v_caller_role := public.current_user_role();
-
-  IF v_caller_role NOT IN ('ADMIN', 'COACH_QUALITE') THEN
-    RETURN jsonb_build_object('error', 'Accès refusé : admin ou coach qualité uniquement');
+  IF v_user_id IS NULL THEN
+    RAISE EXCEPTION 'Non authentifié';
   END IF;
 
-  IF p_role NOT IN ('TELECONSEILLER', 'SUPERVISEUR', 'ADMIN', 'COACH_QUALITE') THEN
-    RETURN jsonb_build_object('error', 'Rôle invalide');
+  SELECT encrypted_password INTO v_encrypted_password
+  FROM auth.users
+  WHERE id = v_user_id;
+
+  IF v_encrypted_password IS NULL THEN
+    RAISE EXCEPTION 'Utilisateur introuvable';
   END IF;
 
-  -- COACH_QUALITE can only assign TELECONSEILLER or SUPERVISEUR
-  IF v_caller_role = 'COACH_QUALITE' AND p_role NOT IN ('TELECONSEILLER', 'SUPERVISEUR') THEN
-    RETURN jsonb_build_object('error', 'Le Coach Qualité ne peut attribuer que Téléconseiller et Superviseur');
+  -- Use crypt() to verify the password against the hash
+  IF v_encrypted_password != crypt(p_password, v_encrypted_password) THEN
+    RAISE EXCEPTION 'Mot de passe incorrect';
   END IF;
-
-  -- Prevent demoting the last admin
-  IF p_role <> 'ADMIN' THEN
-    SELECT role INTO v_target_role FROM public."User" WHERE id = p_target_id;
-    IF v_target_role = 'ADMIN' THEN
-      SELECT COUNT(*) INTO v_admin_count
-        FROM public."User"
-       WHERE role = 'ADMIN'::public."Role" AND "deletedAt" IS NULL;
-      IF v_admin_count <= 1 THEN
-        RETURN jsonb_build_object('error', 'Impossible de retirer le dernier administrateur');
-      END IF;
-    END IF;
-  END IF;
-
-  -- Update the public profile
-  UPDATE public."User"
-     SET role      = p_role::public."Role",
-         "updatedAt" = now()
-   WHERE id = p_target_id;
-
-  -- Sync into auth.users app_metadata so JWT gets the new role on next refresh
-  UPDATE auth.users
-     SET raw_app_meta_data =
-           COALESCE(raw_app_meta_data, '{}'::jsonb) ||
-           jsonb_build_object('role', p_role)
-   WHERE id = p_target_id;
-
-  RETURN jsonb_build_object('ok', true);
 END;
 $$;
 
-GRANT EXECUTE ON FUNCTION public.admin_update_role(UUID, TEXT) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.verify_password(TEXT) TO authenticated;
 
 -- ============================================================
 -- 14. Grants on RPC functions

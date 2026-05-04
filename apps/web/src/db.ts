@@ -233,16 +233,11 @@ export async function getUsers(): Promise<UserRow[]> {
 }
 
 export async function updateUserRole(userId: string, role: Role) {
-  // Use the admin_update_role RPC instead of the Edge Function so that
-  // (a) it works without a fresh Edge Function deployment, and
-  // (b) it also updates auth.users.app_metadata so the JWT reflects the
-  //     new role on the target user's next token refresh.
   return track(`updateUserRole(${role})`, async () => {
-    const { data, error } = await supabase.rpc("admin_update_role", {
-      p_target_id: userId,
-      p_role: role,
+    const { data, error } = await supabase.functions.invoke("update-role", {
+      body: { userId, role },
     });
-    if (error) fail(error, "Impossible de mettre à jour le rôle");
+    if (error) await failFunction(error, "Impossible de mettre à jour le rôle");
     if (data?.error) throw new Error(data.error);
     return data;
   });
@@ -297,16 +292,11 @@ export async function upsertReport(reportData: {
 }): Promise<{ id: string }> {
   const user = await requireUser();
   const now = new Date().toISOString();
-  const payload = {
-    ...reportData,
-    userId: user.id,
-    status: "DRAFT",
-    updatedAt: now,
-  };
 
+  // Check for existing report (includes status to preserve it)
   const existing = await supabase
     .from("DailyReport")
-    .select("id")
+    .select("id,status")
     .eq("date", reportData.date)
     .eq("campaignId", reportData.campaignId)
     .eq("userId", user.id)
@@ -314,16 +304,27 @@ export async function upsertReport(reportData: {
 
   if (existing.error) fail(existing.error, "Impossible de vérifier le rapport existant");
 
-  const write = existing.data?.id
+  const existingStatus = (existing.data?.status as string | undefined) ?? null;
+  const isNew = !existing.data?.id;
+
+  // Only force DRAFT on insert; preserve existing status on update
+  const payload = {
+    ...reportData,
+    userId: user.id,
+    status: isNew ? "DRAFT" : (existingStatus ?? "DRAFT"),
+    updatedAt: now,
+  };
+
+  const write = isNew
     ? await supabase
       .from("DailyReport")
-      .update(payload)
-      .eq("id", existing.data.id)
+      .insert({ id: crypto.randomUUID(), ...payload, createdAt: now })
       .select("id")
       .single()
     : await supabase
       .from("DailyReport")
-      .insert({ id: crypto.randomUUID(), ...payload, createdAt: now })
+      .update(payload)
+      .eq("id", existing.data!.id)
       .select("id")
       .single();
 
@@ -407,7 +408,8 @@ export async function markAllNotificationsRead() {
 }
 
 export async function deleteNotification(id: string) {
-  const { error } = await supabase.from("Notification").delete().eq("id", id);
+  const user = await requireUser();
+  const { error } = await supabase.from("Notification").delete().eq("id", id).eq("userId", user.id);
   if (error) fail(error, "Impossible de supprimer la notification");
 }
 
@@ -464,16 +466,18 @@ export async function forgotPassword(email: string) {
 }
 
 export async function changePassword(currentPassword: string, newPassword: string) {
-  // Note: signInWithPassword refreshes the session but does NOT log out.
-  // We use it to verify the current password without disrupting the session.
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user?.email) throw new Error("Non authentifié");
+  // Note: We intentionally do NOT use signInWithPassword here because it
+  // refreshes the session and triggers onAuthStateChange events across the app.
+  // The user is already authenticated (verified below), and Supabase requires
+  // a valid session to call updateUser anyway.
+  const { data: { user }, error: userError } = await supabase.auth.getUser();
+  if (userError || !user?.email) throw new Error("Non authentifié");
 
-  const { error: signInError } = await supabase.auth.signInWithPassword({
-    email: user.email,
-    password: currentPassword,
+  // Verify current password via a lightweight RPC instead of full re-auth
+  const { error: verifyError } = await supabase.rpc("verify_password", {
+    p_password: currentPassword,
   });
-  if (signInError) throw new Error("Mot de passe actuel incorrect");
+  if (verifyError) throw new Error("Mot de passe actuel incorrect");
 
   const { error } = await supabase.auth.updateUser({ password: newPassword });
   if (error) fail(error, "Impossible de modifier le mot de passe");
@@ -497,6 +501,7 @@ export async function setupPassword(newPassword: string) {
 // ── Export ─────────────────────────────────────────────────
 
 const XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+const XLS_MIME = "application/vnd.ms-excel";
 
 export async function exportReports(
   campaignId: string | null,
@@ -511,10 +516,10 @@ export async function exportReports(
   });
   if (error) await failFunction(error, "Impossible d'exporter les rapports");
 
-  if (data instanceof Blob) return new Blob([data], { type: XLSX_MIME });
+  if (data instanceof Blob) return data;
   if (data instanceof ArrayBuffer) return new Blob([data], { type: XLSX_MIME });
   // Some SDK versions return the raw bytes as a plain object / Uint8Array
-  return new Blob([data as BlobPart], { type: XLSX_MIME });
+  return new Blob([data as BlobPart], { type: XLS_MIME });
 }
 
 // ── Cron (admin) ───────────────────────────────────────────

@@ -1,8 +1,9 @@
 import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
+const ALLOWED_ORIGIN = Deno.env.get("FRONTEND_URL") ?? "https://crm-api-rose.vercel.app";
 const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Origin": ALLOWED_ORIGIN,
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
@@ -53,7 +54,8 @@ serve(async (req) => {
       const { count: adminCount } = await supabase
         .from("User")
         .select("id", { count: "exact", head: true })
-        .eq("role", "ADMIN");
+        .eq("role", "ADMIN")
+        .is("deletedAt", null);
       const { data: target } = await supabase
         .from("User")
         .select("role")
@@ -66,13 +68,21 @@ serve(async (req) => {
 
     const { error: dbError } = await supabase
       .from("User")
-      .update({ role })
+      .update({ role, updatedAt: new Date().toISOString() })
       .eq("id", userId);
     if (dbError) throw dbError;
 
-    // Sync role into JWT app_metadata so RLS / claims see the latest role
+    const { data: { user: targetAuthUser }, error: authReadError } =
+      await supabase.auth.admin.getUserById(userId);
+    if (authReadError || !targetAuthUser) {
+      throw authReadError ?? new Error("Utilisateur auth introuvable");
+    }
+
+    // Sync role into Auth metadata. We merge instead of replacing metadata so
+    // invite/setup fields such as name are not lost.
     const { error: authError } = await supabase.auth.admin.updateUserById(userId, {
-      app_metadata: { role },
+      app_metadata: { ...(targetAuthUser.app_metadata ?? {}), role },
+      user_metadata: { ...(targetAuthUser.user_metadata ?? {}), role },
     });
     if (authError) throw authError;
 

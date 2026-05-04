@@ -1191,15 +1191,22 @@ export function AllReportsPage() {
   const [loading, setLoading] = useState(false);
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [campaignId, setCampaignId] = useState("");
-  const [dateFrom, setDateFrom] = useState("");
-  const [dateTo, setDateTo] = useState("");
+  const today = new Date().toISOString().slice(0, 10);
+  const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  const [dateFrom, setDateFrom] = useState(thirtyDaysAgo);
+  const [dateTo, setDateTo] = useState(today);
 
   useEffect(() => {
     getCampaigns()
       .then(setCampaigns)
       .catch((err) => console.error("[AllReports] getCampaigns failed", err));
-    load();
   }, []);
+
+  // Load only after dates are set (prevents loading all reports at mount)
+  useEffect(() => {
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dateFrom, dateTo, campaignId]);
 
   const load = () => {
     setLoading(true);
@@ -3028,7 +3035,8 @@ export function ExportPage() {
       const label = campaignId
         ? campaigns.find(c => c.id === campaignId)?.name || campaignId
         : "toutes_campagnes";
-      a.download = `reporting_${label.replace(/\s+/g, "_")}_${dateFrom}_${dateTo}.xlsx`;
+      const ext = blob.type.includes("ms-excel") ? "xls" : "xlsx";
+      a.download = `reporting_${label.replace(/\s+/g, "_")}_${dateFrom}_${dateTo}.${ext}`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);

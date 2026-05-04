@@ -92,14 +92,14 @@ function ProtectedApp() {
           <Route index element={<DashboardPage />} />
           <Route path="rapport" element={<RequireRole roles={["TELECONSEILLER","SUPERVISEUR"]}><RapportPage /></RequireRole>} />
           <Route path="mes-saisies" element={<RequireRole roles={["TELECONSEILLER","SUPERVISEUR"]}><MesSaisiesPage /></RequireRole>} />
-          <Route path="validation" element={<RequireRole roles={["SUPERVISEUR","ADMIN"]}><ValidationPage /></RequireRole>} />
+          <Route path="validation" element={<RequireRole roles={["SUPERVISEUR","ADMIN","COACH_QUALITE"]}><ValidationPage /></RequireRole>} />
           <Route path="dashboard" element={<DashboardPage />} />
-          <Route path="campagnes" element={<RequireRole roles={["ADMIN"]}><CampagnesPage /></RequireRole>} />
-          <Route path="equipes" element={<RequireRole roles={["ADMIN"]}><EquipesPage /></RequireRole>} />
-          <Route path="utilisateurs" element={<RequireRole roles={["ADMIN"]}><UtilisateursPage /></RequireRole>} />
+          <Route path="campagnes" element={<RequireRole roles={["ADMIN","COACH_QUALITE"]}><CampagnesPage /></RequireRole>} />
+          <Route path="equipes" element={<RequireRole roles={["ADMIN","COACH_QUALITE"]}><EquipesPage /></RequireRole>} />
+          <Route path="utilisateurs" element={<RequireRole roles={["ADMIN","COACH_QUALITE"]}><UtilisateursPage /></RequireRole>} />
           <Route path="notifications" element={<NotificationsPage />} />
-          <Route path="tous-les-rapports" element={<RequireRole roles={["SUPERVISEUR","ADMIN"]}><AllReportsPage /></RequireRole>} />
-          <Route path="export" element={<RequireRole roles={["ADMIN","SUPERVISEUR"]}><ExportPage /></RequireRole>} />
+          <Route path="tous-les-rapports" element={<RequireRole roles={["SUPERVISEUR","ADMIN","COACH_QUALITE"]}><AllReportsPage /></RequireRole>} />
+          <Route path="export" element={<RequireRole roles={["ADMIN","SUPERVISEUR","COACH_QUALITE"]}><ExportPage /></RequireRole>} />
           <Route path="changer-mot-de-passe" element={<ChangePasswordPage />} />
         </Route>
       </Routes>

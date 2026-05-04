@@ -1,11 +1,64 @@
 import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
-// @deno-types="https://esm.sh/xlsx@0.18.5/types/index.d.ts"
-import * as XLSX from "https://esm.sh/xlsx@0.18.5?target=deno";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
+const ALLOWED_ORIGIN = Deno.env.get("FRONTEND_URL") ?? "https://crm-api-rose.vercel.app";
 const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Origin": ALLOWED_ORIGIN,
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
+
+function escapeXml(value: unknown) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&apos;");
+}
+
+function sheetName(name: string, used: Set<string>) {
+  const base = (name || "Feuille")
+    .replace(/[:\\/?*\[\]]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 31) || "Feuille";
+  let candidate = base;
+  let i = 2;
+  while (used.has(candidate)) {
+    const suffix = ` ${i++}`;
+    candidate = `${base.slice(0, 31 - suffix.length)}${suffix}`;
+  }
+  used.add(candidate);
+  return candidate;
+}
+
+function cell(value: unknown) {
+  const isNumber = typeof value === "number" && Number.isFinite(value);
+  const type = isNumber ? "Number" : "String";
+  return `<Cell><Data ss:Type="${type}">${escapeXml(value)}</Data></Cell>`;
+}
+
+function worksheet(name: string, headers: string[], rows: unknown[][], used: Set<string>) {
+  const safeName = escapeXml(sheetName(name, used));
+  const headerRow = `<Row>${headers.map((h) => cell(h)).join("")}</Row>`;
+  const dataRows = rows.map((r) => `<Row>${r.map((v) => cell(v)).join("")}</Row>`).join("");
+  return `<Worksheet ss:Name="${safeName}"><Table>${headerRow}${dataRows}</Table></Worksheet>`;
+}
+
+function workbookXml(sheets: string[]) {
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<?mso-application progid="Excel.Sheet"?>
+<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet"
+ xmlns:o="urn:schemas-microsoft-com:office:office"
+ xmlns:x="urn:schemas-microsoft-com:office:excel"
+ xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet"
+ xmlns:html="http://www.w3.org/TR/REC-html40">
+ <Styles>
+  <Style ss:ID="Default" ss:Name="Normal"><Alignment ss:Vertical="Center"/></Style>
+ </Styles>
+ ${sheets.join("\n")}
+</Workbook>`;
+}
 
 serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -13,13 +66,33 @@ serve(async (req) => {
   }
 
   try {
+    const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+    const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+    const supabase = createClient(supabaseUrl, serviceKey);
+
+    // ── Auth check ──────────────────────────────────────────────
+    const authHeader = req.headers.get("Authorization");
+    if (!authHeader) throw new Error("Non autorisé");
+    const { data: { user: caller } } = await supabase.auth.getUser(
+      authHeader.replace("Bearer ", ""),
+    );
+    if (!caller) throw new Error("Non autorisé");
+
+    const { data: callerProfile } = await supabase
+      .from("User")
+      .select("role")
+      .eq("id", caller.id)
+      .single();
+    const callerRole = callerProfile?.role;
+    if (!["ADMIN", "SUPERVISEUR", "COACH_QUALITE"].includes(callerRole ?? "")) {
+      throw new Error("Accès refusé : rôle insuffisant");
+    }
+    // ─────────────────────────────────────────────────────────────
+
     // campaignId is optional — omit / null → export ALL campaigns
     // groupBy: "campaign" → one sheet per campaign (default when no campaignId)
     //          "all"      → single sheet
     const { campaignId, dateFrom, dateTo, groupBy = "campaign" } = await req.json();
-
-    const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
-    const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
     const fields =
       `select=date,campaign:Campaign(id,name),user:User!userId(name,email),` +
@@ -47,9 +120,6 @@ serve(async (req) => {
     }
     const reports: any[] = await res.json();
 
-    // ─── Build workbook ────────────────────────────────────────────────────
-    const wb = XLSX.utils.book_new();
-
     const HEADERS = [
       "Date", "Campagne", "Conseiller", "Reçus", "Émis",
       "Traités", "Manqués", "RDV", "SMS", "Statut", "Observations",
@@ -69,29 +139,18 @@ serve(async (req) => {
       r.observations ?? "",
     ];
 
-    const applyColumnWidths = (ws: XLSX.WorkSheet, rows: any[][]) => {
-      if (!rows.length) return;
-      const colWidths = HEADERS.map((h, i) => {
-        const max = Math.max(
-          h.length,
-          ...rows.map((r) => String(r[i] ?? "").length),
-        );
-        return { wch: Math.min(max + 2, 40) };
-      });
-      ws["!cols"] = colWidths;
-    };
-
+    const sheets: string[] = [];
+    const usedSheetNames = new Set<string>();
     if (!campaignId && groupBy === "campaign") {
       // One sheet per campaign
       const byCampaign: Record<string, any[]> = {};
       for (const r of reports) {
-        const name = (r.campaign?.name ?? "Inconnue").substring(0, 31);
+        const name = r.campaign?.name ?? "Inconnue";
         (byCampaign[name] ??= []).push(r);
       }
 
       if (Object.keys(byCampaign).length === 0) {
-        const ws = XLSX.utils.aoa_to_sheet([["Aucun rapport trouvé"]]);
-        XLSX.utils.book_append_sheet(wb, ws, "Rapports");
+        sheets.push(worksheet("Rapports", ["Information"], [["Aucun rapport trouvé"]], usedSheetNames));
       } else {
         // Summary sheet
         const summaryRows: any[][] = [];
@@ -107,12 +166,12 @@ serve(async (req) => {
             campReports.reduce((s, r) => s + (r.smsTotal ?? 0), 0),
           ]);
         }
-        const summaryWs = XLSX.utils.aoa_to_sheet([
+        sheets.push(worksheet(
+          "Résumé",
           ["Campagne", "Nb rapports", "Reçus", "Émis", "Traités", "Manqués", "RDV", "SMS"],
-          ...summaryRows,
-        ]);
-        summaryWs["!cols"] = [{ wch: 30 }, ...Array(7).fill({ wch: 14 })];
-        XLSX.utils.book_append_sheet(wb, summaryWs, "Résumé");
+          summaryRows,
+          usedSheetNames,
+        ));
 
         // One sheet per campaign
         for (const [campName, campReports] of Object.entries(byCampaign)) {
@@ -129,31 +188,25 @@ serve(async (req) => {
             r.status ?? "",
             r.observations ?? "",
           ]);
-          const ws = XLSX.utils.aoa_to_sheet([sheetHeaders, ...rows]);
-          ws["!cols"] = sheetHeaders.map((h, i) => ({
-            wch: Math.min(Math.max(h.length, ...rows.map((r) => String(r[i] ?? "").length)) + 2, 40),
-          }));
-          XLSX.utils.book_append_sheet(wb, ws, campName);
+          sheets.push(worksheet(campName, sheetHeaders, rows, usedSheetNames));
         }
       }
     } else {
       // Single sheet (specific campaign or "all together")
       const rows = reports.map(toRow);
-      const ws = XLSX.utils.aoa_to_sheet([HEADERS, ...rows]);
-      applyColumnWidths(ws, rows);
-      XLSX.utils.book_append_sheet(wb, ws, "Rapports");
+      sheets.push(worksheet("Rapports", HEADERS, rows, usedSheetNames));
     }
 
-    // Write to Uint8Array (cross-platform, works in Deno)
-    const buf: Uint8Array = XLSX.write(wb, { type: "array", bookType: "xlsx" });
+    const xml = workbookXml(sheets);
+    const body = new TextEncoder().encode(xml);
 
     const label = campaignId ? `_campagne` : `_toutes_campagnes`;
-    const filename = `reporting${label}_${Date.now()}.xlsx`;
+    const filename = `reporting${label}_${Date.now()}.xls`;
 
-    return new Response(buf, {
+    return new Response(body, {
       headers: {
         ...corsHeaders,
-        "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "Content-Type": "application/vnd.ms-excel; charset=utf-8",
         "Content-Disposition": `attachment; filename="${filename}"`,
       },
     });
