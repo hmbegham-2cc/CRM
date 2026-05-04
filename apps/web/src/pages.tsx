@@ -3506,19 +3506,17 @@ export function ReportingCampagnesPage() {
 
   const handleExportCSV = () => {
     const headers = [
-      "Campagne", "Nb Rapports", "Reçus", "Émis", "Traités",
-      "Manqués", "RDV", "SMS", "Taux Conversion %"
+      "Campagne", "Reçus", "Émis", "Traités",
+      "Manqués", "RDV", "SMS"
     ];
     const rows = summaries.map((s) => [
       s.campaignName,
-      s.reportCount,
       s.incomingTotal,
       s.outgoingTotal,
       s.handled,
       s.missed,
       s.rdvTotal,
       s.smsTotal,
-      s.conversionRate,
     ]);
     const csv = [headers.join(";"), ...rows.map((r) => r.join(";"))].join("\n");
     const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
@@ -3611,21 +3609,18 @@ export function ReportingCampagnesPage() {
             <thead>
               <tr>
                 <th>Campagne</th>
-                <th style={{ textAlign: "center" }}>Nb Rapports</th>
                 <th style={{ textAlign: "right" }}>Reçus</th>
                 <th style={{ textAlign: "right" }}>Émis</th>
                 <th style={{ textAlign: "right" }}>Traités</th>
                 <th style={{ textAlign: "right" }}>Manqués</th>
                 <th style={{ textAlign: "right" }}>RDV</th>
                 <th style={{ textAlign: "right" }}>SMS</th>
-                <th style={{ textAlign: "right" }}>Conversion</th>
               </tr>
             </thead>
             <tbody>
               {summaries.map((s) => (
                 <tr key={s.campaignId}>
                   <td style={{ fontWeight: 600 }}>{s.campaignName}</td>
-                  <td style={{ textAlign: "center" }}>{s.reportCount}</td>
                   <td style={{ textAlign: "right" }}>{s.incomingTotal.toLocaleString('fr-FR')}</td>
                   <td style={{ textAlign: "right" }}>{s.outgoingTotal.toLocaleString('fr-FR')}</td>
                   <td style={{ textAlign: "right" }}>{s.handled.toLocaleString('fr-FR')}</td>
@@ -3636,14 +3631,10 @@ export function ReportingCampagnesPage() {
                     {s.rdvTotal.toLocaleString('fr-FR')}
                   </td>
                   <td style={{ textAlign: "right" }}>{s.smsTotal.toLocaleString('fr-FR')}</td>
-                  <td style={{ textAlign: "right", fontWeight: 600 }}>
-                    {s.conversionRate}%
-                  </td>
                 </tr>
               ))}
               <tr style={{ borderTop: "2px solid var(--border)", background: "#f8fafc" }}>
                 <td style={{ fontWeight: 700 }}>TOTAL</td>
-                <td style={{ textAlign: "center", fontWeight: 700 }}>{totals.reportCount}</td>
                 <td style={{ textAlign: "right", fontWeight: 700 }}>{totals.incomingTotal.toLocaleString('fr-FR')}</td>
                 <td style={{ textAlign: "right", fontWeight: 700 }}>{totals.outgoingTotal.toLocaleString('fr-FR')}</td>
                 <td style={{ textAlign: "right", fontWeight: 700 }}>{totals.handled.toLocaleString('fr-FR')}</td>
@@ -3654,7 +3645,6 @@ export function ReportingCampagnesPage() {
                   {totals.rdvTotal.toLocaleString('fr-FR')}
                 </td>
                 <td style={{ textAlign: "right", fontWeight: 700 }}>{totals.smsTotal.toLocaleString('fr-FR')}</td>
-                <td style={{ textAlign: "right", fontWeight: 700 }}>{totalConversion}%</td>
               </tr>
             </tbody>
           </table>

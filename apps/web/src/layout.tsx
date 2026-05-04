@@ -23,21 +23,39 @@ export function AppLayout() {
   const { user, logout } = useAuth();
   const location = useLocation();
 
-  const menuItems = [
-    { path: "/", label: "Dashboard", icon: Database, roles: ["TELECONSEILLER", "SUPERVISEUR", "ADMIN", "COACH_QUALITE"] },
-    { path: "/rapport", label: "Mon rapport", icon: FileEdit, roles: ["TELECONSEILLER", "SUPERVISEUR"] },
-    { path: "/mes-saisies", label: "Mes saisies", icon: History, roles: ["TELECONSEILLER", "SUPERVISEUR"] },
-    { path: "/tous-les-rapports", label: "Tous les rapports", icon: LayoutDashboard, roles: ["SUPERVISEUR", "ADMIN", "COACH_QUALITE"] },
-    { path: "/validation", label: "Validation", icon: CheckCircle, roles: ["SUPERVISEUR", "ADMIN", "COACH_QUALITE"] },
-    { path: "/reporting-campagnes", label: "Reporting Campagnes", icon: BarChart3, roles: ["SUPERVISEUR", "ADMIN", "COACH_QUALITE"] },
-    { path: "/campagnes", label: "Campagnes", icon: Settings, roles: ["ADMIN", "COACH_QUALITE"] },
-    { path: "/equipes", label: "Équipes", icon: Users, roles: ["ADMIN", "COACH_QUALITE"] },
-    { path: "/utilisateurs", label: "Utilisateurs", icon: Users, roles: ["ADMIN", "COACH_QUALITE"] },
-    { path: "/notifications", label: "Notifications", icon: Bell, roles: ["TELECONSEILLER", "SUPERVISEUR", "ADMIN", "COACH_QUALITE"] },
-    { path: "/export", label: "Export Excel", icon: Download, roles: ["ADMIN", "SUPERVISEUR", "COACH_QUALITE"] },
+  const menuSections = [
+    {
+      title: "Mon espace",
+      items: [
+        { path: "/", label: "Dashboard", icon: Database, roles: ["TELECONSEILLER", "SUPERVISEUR", "ADMIN", "COACH_QUALITE"] },
+        { path: "/rapport", label: "Mon rapport", icon: FileEdit, roles: ["TELECONSEILLER", "SUPERVISEUR"] },
+        { path: "/mes-saisies", label: "Mes saisies", icon: History, roles: ["TELECONSEILLER", "SUPERVISEUR"] },
+        { path: "/notifications", label: "Notifications", icon: Bell, roles: ["TELECONSEILLER", "SUPERVISEUR", "ADMIN", "COACH_QUALITE"] },
+      ]
+    },
+    {
+      title: "Gestion & Validation",
+      items: [
+        { path: "/tous-les-rapports", label: "Tous les rapports", icon: LayoutDashboard, roles: ["SUPERVISEUR", "ADMIN", "COACH_QUALITE"] },
+        { path: "/validation", label: "Validation", icon: CheckCircle, roles: ["SUPERVISEUR", "ADMIN", "COACH_QUALITE"] },
+        { path: "/reporting-campagnes", label: "Reporting Campagnes", icon: BarChart3, roles: ["SUPERVISEUR", "ADMIN", "COACH_QUALITE"] },
+      ]
+    },
+    {
+      title: "Administration",
+      items: [
+        { path: "/campagnes", label: "Campagnes", icon: Settings, roles: ["ADMIN", "COACH_QUALITE"] },
+        { path: "/equipes", label: "Équipes", icon: Users, roles: ["ADMIN", "COACH_QUALITE"] },
+        { path: "/utilisateurs", label: "Utilisateurs", icon: Users, roles: ["ADMIN", "COACH_QUALITE"] },
+        { path: "/export", label: "Export Excel", icon: Download, roles: ["ADMIN", "SUPERVISEUR", "COACH_QUALITE"] },
+      ]
+    },
   ];
 
-  const filteredMenu = menuItems.filter(item => item.roles.includes(user?.role || ""));
+  const filteredSections = menuSections.map(section => ({
+    ...section,
+    items: section.items.filter(item => item.roles.includes(user?.role || ""))
+  })).filter(section => section.items.length > 0);
   const [hasUnread, setHasUnread] = useState(false);
 
   useEffect(() => {
@@ -87,34 +105,48 @@ export function AppLayout() {
           <img src="/logo.png" alt="2C Conseil" style={{ maxWidth: '100%', height: 'auto', display: 'block' }} />
         </div>
         
-        <nav style={{ flex: 1 }}>
-          {filteredMenu.map((item) => {
-            const Icon = item.icon;
-            const isActive = location.pathname === item.path;
-            return (
-              <Link 
-                key={item.path} 
-                to={item.path} 
-                className={`nav-link ${isActive ? "active" : ""}`}
-                style={{ position: 'relative' }}
-              >
-                <Icon size={20} />
-                <span>{item.label}</span>
-                {item.path === '/notifications' && hasUnread && (
-                  <div style={{
-                    position: 'absolute',
-                    top: '8px',
-                    left: '32px',
-                    width: '8px',
-                    height: '8px',
-                    background: 'var(--danger)',
-                    borderRadius: '50%',
-                    border: '2px solid #1e293b'
-                  }} />
-                )}
-              </Link>
-            );
-          })}
+        <nav style={{ flex: 1, overflowY: 'auto' }}>
+          {filteredSections.map((section) => (
+            <div key={section.title} style={{ marginBottom: '16px' }}>
+              <div style={{
+                padding: '8px 12px 4px',
+                fontSize: '11px',
+                fontWeight: 600,
+                textTransform: 'uppercase',
+                letterSpacing: '0.5px',
+                color: '#64748b',
+              }}>
+                {section.title}
+              </div>
+              {section.items.map((item: { path: string; label: string; icon: React.ComponentType<{ size: number }>; roles: string[] }) => {
+                const Icon = item.icon;
+                const isActive = location.pathname === item.path;
+                return (
+                  <Link
+                    key={item.path}
+                    to={item.path}
+                    className={`nav-link ${isActive ? "active" : ""}`}
+                    style={{ position: 'relative' }}
+                  >
+                    <Icon size={20} />
+                    <span>{item.label}</span>
+                    {item.path === '/notifications' && hasUnread && (
+                      <div style={{
+                        position: 'absolute',
+                        top: '8px',
+                        left: '32px',
+                        width: '8px',
+                        height: '8px',
+                        background: 'var(--danger)',
+                        borderRadius: '50%',
+                        border: '2px solid #1e293b'
+                      }} />
+                    )}
+                  </Link>
+                );
+              })}
+            </div>
+          ))}
         </nav>
 
         <div className="user-info" style={{ marginTop: "auto", padding: "12px", borderTop: "1px solid #334155" }}>
