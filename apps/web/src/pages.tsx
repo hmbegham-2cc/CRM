@@ -680,11 +680,14 @@ export function DashboardPage() {
         ...(from ? { dateFrom: from } : {}),
         ...(to ? { dateTo: to } : {}),
         ...(mode === 'PERSONAL' ? { userId: user?.id } : (uid ? { userId: uid } : {})),
-        // TEAM: only VALIDATED + SUBMITTED (exclude DRAFT and REJECTED)
-        // PERSONAL: exclude REJECTED only (allow DRAFT so user sees their work-in-progress)
+        // COACH_QUALITE and ADMIN see ALL statuses (including DRAFT) in TEAM mode
+        // Other users in TEAM mode: only VALIDATED + SUBMITTED (exclude DRAFT and REJECTED)
+        // PERSONAL mode: exclude REJECTED only (allow DRAFT so user sees their work-in-progress)
         ...(mode === 'TEAM'
-          ? { statusIn: ['VALIDATED', 'SUBMITTED'] as any }
-          : { excludeStatus: 'REJECTED' as const }),
+          ? (user?.role === 'ADMIN' || user?.role === 'COACH_QUALITE'
+              ? { excludeStatus: 'REJECTED' as const }  // Admin/Coach see everything except rejected
+              : { statusIn: ['VALIDATED', 'SUBMITTED'] as any })  // Others see only validated/submitted
+          : { excludeStatus: 'REJECTED' as const }),  // Personal mode: exclude rejected only
       };
 
       // Load current period
