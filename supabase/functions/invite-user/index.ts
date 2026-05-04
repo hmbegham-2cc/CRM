@@ -46,7 +46,9 @@ serve(async (req) => {
       .select("role")
       .eq("id", caller.id)
       .single();
-    if (callerProfile?.role !== "ADMIN") throw new Error("Accès refusé : admin uniquement");
+    if (!callerProfile?.role || !["ADMIN", "COACH_QUALITE"].includes(callerProfile.role)) {
+      throw new Error("Accès refusé : admin ou coach qualité uniquement");
+    }
 
     // 2. Validate input
     const { email: rawEmail, name, role } = await req.json();

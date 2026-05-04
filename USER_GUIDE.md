@@ -331,7 +331,7 @@ Le fichier CSV peut s'ouvrir dans Excel.
 
 ---
 
-### 📌 Cas 5 : Créer une nouvelle campagne (Coach)
+### 📌 Cas 5 : Créer une nouvelle campagne (Admin)
 
 1. Menu latéral → **"Campagnes"**
 2. Bouton **"Nouvelle campagne"**
