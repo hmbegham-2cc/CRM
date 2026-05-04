@@ -101,23 +101,20 @@ export function AppLayout() {
   return (
     <div className="layout">
       <aside className="sidebar">
-        <div className="brand" style={{ padding: '20px 16px', borderBottom: '1px solid #334155', textAlign: 'center' }}>
-          <img src="/logo.png" alt="2C Conseil" style={{ maxWidth: '140px', height: 'auto', display: 'block', margin: '0 auto' }} />
-          <div style={{ fontSize: '12px', color: '#64748b', marginTop: '8px', fontWeight: 500 }}>CRM Reporting</div>
+        <div className="brand" style={{ padding: '16px', borderBottom: '1px solid #334155', textAlign: 'center' }}>
+          <img src="/logo.png" alt="2C Conseil" style={{ maxWidth: '120px', height: 'auto', display: 'block', margin: '0 auto' }} />
+          <div style={{ fontSize: '11px', color: '#64748b', marginTop: '6px' }}>CRM Reporting</div>
         </div>
         
-        <nav style={{ flex: 1, overflowY: 'auto', padding: '0 12px' }}>
+        <nav style={{ flex: 1, padding: '8px' }}>
           {filteredSections.map((section, sectionIndex) => (
-            <div key={section.title} style={{ marginBottom: sectionIndex === filteredSections.length - 1 ? '0' : '20px' }}>
+            <div key={section.title} style={{ marginBottom: sectionIndex === filteredSections.length - 1 ? '0' : '12px' }}>
               <div style={{
-                padding: '12px 8px 8px',
+                padding: '8px 8px 4px',
                 fontSize: '10px',
-                fontWeight: 700,
+                fontWeight: 600,
                 textTransform: 'uppercase',
-                letterSpacing: '1px',
-                color: '#94a3b8',
-                borderBottom: '1px solid #334155',
-                marginBottom: '8px',
+                color: '#64748b',
               }}>
                 {section.title}
               </div>
@@ -133,32 +130,27 @@ export function AppLayout() {
                       position: 'relative',
                       display: 'flex',
                       alignItems: 'center',
-                      gap: '12px',
-                      padding: '10px 12px',
-                      marginBottom: '4px',
-                      borderRadius: '8px',
+                      gap: '10px',
+                      padding: '8px 10px',
+                      marginBottom: '2px',
+                      borderRadius: '6px',
                       fontSize: '13px',
-                      fontWeight: 500,
-                      color: isActive ? '#fff' : '#cbd5e1',
-                      background: isActive ? 'linear-gradient(135deg, #3b82f6 0%, #2563eb 100%)' : 'transparent',
-                      transition: 'all 0.2s ease',
+                      color: isActive ? '#fff' : '#94a3b8',
+                      background: isActive ? '#2563eb' : 'transparent',
                       textDecoration: 'none',
                     }}
                   >
-                    <div style={{ opacity: isActive ? 1 : 0.7 }}>
-                      <Icon size={18} />
-                    </div>
+                    <Icon size={16} />
                     <span>{item.label}</span>
                     {item.path === '/notifications' && hasUnread && (
                       <div style={{
                         position: 'absolute',
-                        top: '8px',
-                        left: '28px',
+                        top: '6px',
+                        left: '24px',
                         width: '8px',
                         height: '8px',
                         background: '#ef4444',
                         borderRadius: '50%',
-                        border: '2px solid #1e293b'
                       }} />
                     )}
                   </Link>
@@ -168,21 +160,21 @@ export function AppLayout() {
           ))}
         </nav>
 
-        <div className="user-info" style={{ marginTop: "auto", padding: "16px 12px", borderTop: "1px solid #334155", background: '#1e293b' }}>
-          <div style={{ marginBottom: "12px", padding: "12px", background: '#334155', borderRadius: '10px' }}>
-            <div style={{ fontSize: "14px", fontWeight: 700, color: "#fff", marginBottom: '4px' }}>{user?.name || "Utilisateur"}</div>
-            <div style={{ fontSize: "11px", color: "#94a3b8" }}>{user?.email}</div>
+        <div className="user-info" style={{ marginTop: "auto", padding: "12px", borderTop: "1px solid #334155" }}>
+          <div style={{ marginBottom: "8px" }}>
+            <div style={{ fontSize: "13px", fontWeight: 600, color: "#fff" }}>{user?.name || "Utilisateur"}</div>
+            <div style={{ fontSize: "10px", color: "#64748b" }}>{user?.email}</div>
           </div>
-          <Link to="/changer-mot-de-passe" style={{ display: "flex", alignItems: "center", gap: "10px", padding: "10px 12px", color: "#94a3b8", textDecoration: "none", fontSize: "12px", borderRadius: "8px", marginBottom: "8px" }}>
-            <Key size={16} />
-            <span>Changer le mot de passe</span>
+          <Link to="/changer-mot-de-passe" style={{ display: "flex", alignItems: "center", gap: "8px", padding: "6px 8px", color: "#64748b", textDecoration: "none", fontSize: "11px", borderRadius: "6px", marginBottom: "6px" }}>
+            <Key size={14} />
+            <span>Mot de passe</span>
           </Link>
           <button 
             className="btn btn-danger" 
-            style={{ width: "100%", justifyContent: "center", padding: '10px', fontSize: '13px', fontWeight: 600 }}
+            style={{ width: "100%", justifyContent: "center", padding: '8px', fontSize: '12px' }}
             onClick={logout}
           >
-            <LogOut size={16} />
+            <LogOut size={14} />
             <span>Déconnexion</span>
           </button>
         </div>
