@@ -16,6 +16,7 @@ import {
   LogOut,
   Bell,
   Key,
+  BarChart3,
 } from "lucide-react";
 
 export function AppLayout() {
@@ -28,6 +29,7 @@ export function AppLayout() {
     { path: "/mes-saisies", label: "Mes saisies", icon: History, roles: ["TELECONSEILLER", "SUPERVISEUR"] },
     { path: "/tous-les-rapports", label: "Tous les rapports", icon: LayoutDashboard, roles: ["SUPERVISEUR", "ADMIN", "COACH_QUALITE"] },
     { path: "/validation", label: "Validation", icon: CheckCircle, roles: ["SUPERVISEUR", "ADMIN", "COACH_QUALITE"] },
+    { path: "/reporting-campagnes", label: "Reporting Campagnes", icon: BarChart3, roles: ["SUPERVISEUR", "ADMIN", "COACH_QUALITE"] },
     { path: "/campagnes", label: "Campagnes", icon: Settings, roles: ["ADMIN", "COACH_QUALITE"] },
     { path: "/equipes", label: "Équipes", icon: Users, roles: ["ADMIN", "COACH_QUALITE"] },
     { path: "/utilisateurs", label: "Utilisateurs", icon: Users, roles: ["ADMIN", "COACH_QUALITE"] },

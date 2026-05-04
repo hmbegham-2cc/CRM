@@ -3410,3 +3410,256 @@ export function LoginPage() {
     </div>
   );
 }
+
+// ============================================================
+// Reporting Campagnes — Tableau récapitulatif pour la direction
+// ============================================================
+
+interface CampaignSummary {
+  campaignId: string;
+  campaignName: string;
+  reportCount: number;
+  incomingTotal: number;
+  outgoingTotal: number;
+  handled: number;
+  missed: number;
+  rdvTotal: number;
+  smsTotal: number;
+  conversionRate: string;
+}
+
+export function ReportingCampagnesPage() {
+  const { user } = useAuth();
+  const [summaries, setSummaries] = useState<CampaignSummary[]>([]);
+  const [campaigns, setCampaigns] = useState<Campaign[]>([]);
+  const [loading, setLoading] = useState(false);
+  const today = new Date().toISOString().slice(0, 10);
+  const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  const [dateFrom, setDateFrom] = useState(thirtyDaysAgo);
+  const [dateTo, setDateTo] = useState(today);
+
+  useEffect(() => {
+    getCampaigns()
+      .then(setCampaigns)
+      .catch((err) => console.error("[ReportingCampagnes] getCampaigns failed", err));
+  }, []);
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      // Admin/Coach/Superviseur see all reports except rejected
+      const filters: any = { excludeStatus: 'REJECTED' };
+      if (dateFrom) filters.dateFrom = dateFrom;
+      if (dateTo) filters.dateTo = dateTo;
+
+      const reports = await getReports(filters);
+
+      // Group by campaign
+      const byCampaign: Record<string, CampaignSummary> = {};
+      reports.forEach((r) => {
+        const cid = r.campaign?.id || 'unknown';
+        const cname = r.campaign?.name || 'Inconnue';
+        if (!byCampaign[cid]) {
+          byCampaign[cid] = {
+            campaignId: cid,
+            campaignName: cname,
+            reportCount: 0,
+            incomingTotal: 0,
+            outgoingTotal: 0,
+            handled: 0,
+            missed: 0,
+            rdvTotal: 0,
+            smsTotal: 0,
+            conversionRate: '0.0',
+          };
+        }
+        byCampaign[cid].reportCount++;
+        byCampaign[cid].incomingTotal += Number(r.incomingTotal) || 0;
+        byCampaign[cid].outgoingTotal += Number(r.outgoingTotal) || 0;
+        byCampaign[cid].handled += Number(r.handled) || 0;
+        byCampaign[cid].missed += Number(r.missed) || 0;
+        byCampaign[cid].rdvTotal += Number(r.rdvTotal) || 0;
+        byCampaign[cid].smsTotal += Number(r.smsTotal) || 0;
+      });
+
+      // Compute conversion rates
+      const result = Object.values(byCampaign).map((c) => ({
+        ...c,
+        conversionRate: c.handled > 0 ? ((c.rdvTotal / c.handled) * 100).toFixed(1) : '0.0',
+      }));
+
+      // Sort by report count desc
+      result.sort((a, b) => b.reportCount - a.reportCount);
+      setSummaries(result);
+    } catch (err: any) {
+      console.error("[ReportingCampagnes] load failed", err);
+      toast.error(err?.message || "Impossible de charger les données");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dateFrom, dateTo]);
+
+  const handleExportCSV = () => {
+    const headers = [
+      "Campagne", "Nb Rapports", "Reçus", "Émis", "Traités",
+      "Manqués", "RDV", "SMS", "Taux Conversion %"
+    ];
+    const rows = summaries.map((s) => [
+      s.campaignName,
+      s.reportCount,
+      s.incomingTotal,
+      s.outgoingTotal,
+      s.handled,
+      s.missed,
+      s.rdvTotal,
+      s.smsTotal,
+      s.conversionRate,
+    ]);
+    const csv = [headers.join(";"), ...rows.map((r) => r.join(";"))].join("\n");
+    const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    const datePart = dateFrom && dateTo ? `_${dateFrom}_${dateTo}` : "";
+    a.download = `reporting_campagnes${datePart}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    toast.success("Export CSV téléchargé");
+  };
+
+  const totals = useMemo(() => {
+    return summaries.reduce(
+      (acc, s) => ({
+        reportCount: acc.reportCount + s.reportCount,
+        incomingTotal: acc.incomingTotal + s.incomingTotal,
+        outgoingTotal: acc.outgoingTotal + s.outgoingTotal,
+        handled: acc.handled + s.handled,
+        missed: acc.missed + s.missed,
+        rdvTotal: acc.rdvTotal + s.rdvTotal,
+        smsTotal: acc.smsTotal + s.smsTotal,
+      }),
+      { reportCount: 0, incomingTotal: 0, outgoingTotal: 0, handled: 0, missed: 0, rdvTotal: 0, smsTotal: 0 }
+    );
+  }, [summaries]);
+
+  const totalConversion = totals.handled > 0 ? ((totals.rdvTotal / totals.handled) * 100).toFixed(1) : '0.0';
+
+  return (
+    <div>
+      <div className="page-header">
+        <div>
+          <h1>Reporting Campagnes</h1>
+          <p className="muted">Tableau récapitulatif par campagne pour la direction</p>
+        </div>
+      </div>
+
+      <div className="card" style={{ marginBottom: "24px" }}>
+        <div className="responsive-filters">
+          <div className="field" style={{ marginBottom: 0 }}>
+            <label className="label">
+              <Calendar size={14} style={{ marginRight: 6 }} />
+              Du
+            </label>
+            <input
+              type="date"
+              className="input"
+              value={dateFrom}
+              onChange={(e) => setDateFrom(e.target.value)}
+            />
+          </div>
+          <div className="field" style={{ marginBottom: 0 }}>
+            <label className="label">
+              <Calendar size={14} style={{ marginRight: 6 }} />
+              Au
+            </label>
+            <input
+              type="date"
+              className="input"
+              value={dateTo}
+              onChange={(e) => setDateTo(e.target.value)}
+            />
+          </div>
+          <button className="btn btn-primary" onClick={load} disabled={loading}>
+            <Search size={18} />
+            {loading ? "Chargement..." : "Actualiser"}
+          </button>
+          <button className="btn btn-secondary" onClick={handleExportCSV} disabled={summaries.length === 0}>
+            <Download size={18} />
+            Export CSV
+          </button>
+        </div>
+      </div>
+
+      {loading ? (
+        <div className="card" style={{ textAlign: "center", padding: "48px" }}>
+          Chargement...
+        </div>
+      ) : summaries.length === 0 ? (
+        <div className="card" style={{ textAlign: "center", padding: "48px" }}>
+          <p className="muted">Aucune donnée disponible pour la période sélectionnée.</p>
+        </div>
+      ) : (
+        <div className="card" style={{ overflowX: "auto", padding: 0 }}>
+          <table style={{ margin: 0, minWidth: "900px" }}>
+            <thead>
+              <tr>
+                <th>Campagne</th>
+                <th style={{ textAlign: "center" }}>Nb Rapports</th>
+                <th style={{ textAlign: "right" }}>Reçus</th>
+                <th style={{ textAlign: "right" }}>Émis</th>
+                <th style={{ textAlign: "right" }}>Traités</th>
+                <th style={{ textAlign: "right" }}>Manqués</th>
+                <th style={{ textAlign: "right" }}>RDV</th>
+                <th style={{ textAlign: "right" }}>SMS</th>
+                <th style={{ textAlign: "right" }}>Conversion</th>
+              </tr>
+            </thead>
+            <tbody>
+              {summaries.map((s) => (
+                <tr key={s.campaignId}>
+                  <td style={{ fontWeight: 600 }}>{s.campaignName}</td>
+                  <td style={{ textAlign: "center" }}>{s.reportCount}</td>
+                  <td style={{ textAlign: "right" }}>{s.incomingTotal.toLocaleString('fr-FR')}</td>
+                  <td style={{ textAlign: "right" }}>{s.outgoingTotal.toLocaleString('fr-FR')}</td>
+                  <td style={{ textAlign: "right" }}>{s.handled.toLocaleString('fr-FR')}</td>
+                  <td style={{ textAlign: "right", color: s.missed > 0 ? 'var(--danger)' : undefined }}>
+                    {s.missed.toLocaleString('fr-FR')}
+                  </td>
+                  <td style={{ textAlign: "right", color: 'var(--success)' }}>
+                    {s.rdvTotal.toLocaleString('fr-FR')}
+                  </td>
+                  <td style={{ textAlign: "right" }}>{s.smsTotal.toLocaleString('fr-FR')}</td>
+                  <td style={{ textAlign: "right", fontWeight: 600 }}>
+                    {s.conversionRate}%
+                  </td>
+                </tr>
+              ))}
+              <tr style={{ borderTop: "2px solid var(--border)", background: "#f8fafc" }}>
+                <td style={{ fontWeight: 700 }}>TOTAL</td>
+                <td style={{ textAlign: "center", fontWeight: 700 }}>{totals.reportCount}</td>
+                <td style={{ textAlign: "right", fontWeight: 700 }}>{totals.incomingTotal.toLocaleString('fr-FR')}</td>
+                <td style={{ textAlign: "right", fontWeight: 700 }}>{totals.outgoingTotal.toLocaleString('fr-FR')}</td>
+                <td style={{ textAlign: "right", fontWeight: 700 }}>{totals.handled.toLocaleString('fr-FR')}</td>
+                <td style={{ textAlign: "right", fontWeight: 700, color: totals.missed > 0 ? 'var(--danger)' : undefined }}>
+                  {totals.missed.toLocaleString('fr-FR')}
+                </td>
+                <td style={{ textAlign: "right", fontWeight: 700, color: 'var(--success)' }}>
+                  {totals.rdvTotal.toLocaleString('fr-FR')}
+                </td>
+                <td style={{ textAlign: "right", fontWeight: 700 }}>{totals.smsTotal.toLocaleString('fr-FR')}</td>
+                <td style={{ textAlign: "right", fontWeight: 700 }}>{totalConversion}%</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
