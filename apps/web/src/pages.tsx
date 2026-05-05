@@ -3580,8 +3580,8 @@ export function ReportingCampagnesPage() {
     const isSingle = !!campaignId;
 
     const headers = isSingle
-      ? ["Date", "Agents", "Reçus", "Émis", "Traités", "Manqués", "RDV", "SMS"]
-      : ["Campagne", "Agents", "Reçus", "Émis", "Traités", "Manqués", "RDV", "SMS"];
+      ? ["Date", "Agents", "Appels reçus", "Appels émis", "Appels traités", "Appels manqués", "RDV", "SMS"]
+      : ["Campagne", "Agents", "Appels reçus", "Appels émis", "Appels traités", "Appels manqués", "RDV", "SMS"];
 
     const rows = isSingle
       ? dailySummaries.map((d) => {
@@ -3822,15 +3822,15 @@ export function ReportingCampagnesPage() {
                 </div>
                 <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 10 }}>
                   <div className="card" style={{ padding: "10px 12px", minWidth: 160 }}>
-                    <div className="muted" style={{ fontSize: 12 }}>Reçus</div>
+                    <div className="muted" style={{ fontSize: 12 }}>Appels reçus</div>
                     <div style={{ fontWeight: 800, fontSize: 16 }}>{totals.incomingTotal.toLocaleString('fr-FR')}</div>
                   </div>
                   <div className="card" style={{ padding: "10px 12px", minWidth: 160 }}>
-                    <div className="muted" style={{ fontSize: 12 }}>Émis</div>
+                    <div className="muted" style={{ fontSize: 12 }}>Appels émis</div>
                     <div style={{ fontWeight: 800, fontSize: 16 }}>{totals.outgoingTotal.toLocaleString('fr-FR')}</div>
                   </div>
                   <div className="card" style={{ padding: "10px 12px", minWidth: 160 }}>
-                    <div className="muted" style={{ fontSize: 12 }}>Traités</div>
+                    <div className="muted" style={{ fontSize: 12 }}>Appels traités</div>
                     <div style={{ fontWeight: 800, fontSize: 16 }}>{totals.handled.toLocaleString('fr-FR')}</div>
                   </div>
                   <div className="card" style={{ padding: "10px 12px", minWidth: 160 }}>
@@ -3847,10 +3847,10 @@ export function ReportingCampagnesPage() {
                 {campaignId ? <th>Date</th> : null}
                 {!campaignId ? <th>Campagne</th> : null}
                 <th>Agents</th>
-                <th style={{ textAlign: "right" }}>Reçus</th>
-                <th style={{ textAlign: "right" }}>Émis</th>
-                <th style={{ textAlign: "right" }}>Traités</th>
-                <th style={{ textAlign: "right" }}>Manqués</th>
+                <th style={{ textAlign: "right" }}>Appels reçus</th>
+                <th style={{ textAlign: "right" }}>Appels émis</th>
+                <th style={{ textAlign: "right" }}>Appels traités</th>
+                <th style={{ textAlign: "right" }}>Appels manqués</th>
                 <th style={{ textAlign: "right" }}>RDV</th>
                 <th style={{ textAlign: "right" }}>SMS</th>
               </tr>
