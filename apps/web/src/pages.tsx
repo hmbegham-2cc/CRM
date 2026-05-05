@@ -1174,7 +1174,7 @@ export function DashboardPage() {
                     </td>
                     <td>
                       <div style={{ display: "flex", flexWrap: "wrap", gap: "4px" }}>
-                        {u.campaignMemberships.map((c: any) => (
+                        {(u.campaignMemberships || []).map((c: any) => (
                           <span key={c.campaign.name} className="badge" style={{ fontSize: "10px", background: "#f1f5f9", color: "#475569" }}>
                             {c.campaign.name}
                           </span>

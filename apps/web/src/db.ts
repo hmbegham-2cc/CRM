@@ -116,7 +116,10 @@ export async function getCampaignsLite(options?: { force?: boolean }): Promise<C
       .select("id, name, active")
       .order("name");
     if (error) fail(error, "Impossible de charger les campagnes");
-    const result = (data || []) as Campaign[];
+    const result = (data || []).map((c: any) => ({
+      ...c,
+      members: [],
+    })) as Campaign[];
     campaignsLiteCache = { data: result, at: now };
     return result;
   });
