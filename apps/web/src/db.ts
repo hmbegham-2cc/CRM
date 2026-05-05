@@ -1,6 +1,17 @@
 import { supabase } from "./supabase";
-import type { Campaign, DailyReport, Role } from "@crc/types";
+import type {
+  Campaign,
+  DailyReport,
+  NotificationRow,
+  Role,
+  Team,
+  UserRow,
+} from "@crc/types";
 import { diag, classifyError } from "./lib/diag";
+
+let campaignsLiteCache: { data: Campaign[]; at: number } | null = null;
+let usersLiteCache: { data: Pick<UserRow, "id" | "name" | "email" | "role" | "active">[]; at: number } | null = null;
+const LITE_CACHE_TTL_MS = 60_000;
 
 // ── Helpers ────────────────────────────────────────────────
 
@@ -90,6 +101,24 @@ export async function getCampaigns(): Promise<Campaign[]> {
       ...c,
       members: (c.members || []).filter((m: any) => !m.endDate),
     }));
+  });
+}
+
+export async function getCampaignsLite(options?: { force?: boolean }): Promise<Campaign[]> {
+  return track("getCampaignsLite", async () => {
+    const now = Date.now();
+    if (!options?.force && campaignsLiteCache && now - campaignsLiteCache.at < LITE_CACHE_TTL_MS) {
+      return campaignsLiteCache.data;
+    }
+
+    const { data, error } = await supabase
+      .from("Campaign")
+      .select("id, name, active")
+      .order("name");
+    if (error) fail(error, "Impossible de charger les campagnes");
+    const result = (data || []) as Campaign[];
+    campaignsLiteCache = { data: result, at: now };
+    return result;
   });
 }
 
@@ -229,6 +258,28 @@ export async function getUsers(): Promise<UserRow[]> {
       active: u.active ?? true,
       campaignMemberships: (u.campaignMemberships || []).filter((m: any) => !m.endDate),
     }));
+  });
+}
+
+export async function getUsersLite(options?: { force?: boolean }): Promise<Pick<UserRow, "id" | "name" | "email" | "role" | "active">[]> {
+  return track("getUsersLite", async () => {
+    const now = Date.now();
+    if (!options?.force && usersLiteCache && now - usersLiteCache.at < LITE_CACHE_TTL_MS) {
+      return usersLiteCache.data;
+    }
+
+    const { data, error } = await supabase
+      .from("User")
+      .select("id, name, email, role, active")
+      .is("deletedAt", null)
+      .order("name");
+    if (error) fail(error, "Impossible de charger les utilisateurs");
+    const result = (data || []).map((u: any) => ({
+      ...u,
+      active: u.active ?? true,
+    }));
+    usersLiteCache = { data: result, at: now };
+    return result;
   });
 }
 

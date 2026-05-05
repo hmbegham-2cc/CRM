@@ -7,8 +7,8 @@ import {
 import { Navigate, useNavigate, useSearchParams } from "react-router-dom";
 import type { Campaign, DailyReport, Role } from "@crc/types";
 import {
-  getCampaigns, createCampaign, updateCampaign, deleteCampaign,
-  assignTeam, assignUserCampaigns, getUsers, updateUserRole, getReports, upsertReport,
+  getCampaigns, getCampaignsLite, createCampaign, updateCampaign, deleteCampaign,
+  assignTeam, assignUserCampaigns, getUsers, getUsersLite, updateUserRole, getReports, upsertReport,
   submitReport, actionReport, getNotifications, markNotificationRead,
   markAllNotificationsRead, deleteNotification, deleteAllNotifications,
   inviteUser, forgotPassword, changePassword, setupPassword, exportReports,
@@ -432,15 +432,16 @@ export function MesSaisiesPage() {
 }
 
 export function ValidationPage() {
+  const { user } = useAuth();
+  const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [reports, setReports] = useState<DailyReport[]>([]);
   const [campaignId, setCampaignId] = useState("");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
-  const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    getCampaigns()
+    getCampaignsLite()
       .then(setCampaigns)
       .catch((err) => console.error("[Validation] getCampaigns failed", err));
   }, []);
@@ -659,11 +660,11 @@ export function DashboardPage() {
   const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
-    getCampaigns()
+    getCampaignsLite()
       .then(setCampaigns)
       .catch((err) => console.error("[Dashboard] getCampaigns failed", err));
     if (user?.role === 'ADMIN' || user?.role === 'SUPERVISEUR' || user?.role === 'COACH_QUALITE') {
-      getUsers().then(setUsers).catch(() => setUsers([]));
+      getUsersLite().then(setUsers as any).catch(() => setUsers([]));
     }
   }, [user]);
 
@@ -1201,7 +1202,7 @@ export function AllReportsPage() {
   const [dateTo, setDateTo] = useState(today);
 
   useEffect(() => {
-    getCampaigns()
+    getCampaignsLite()
       .then(setCampaigns)
       .catch((err) => console.error("[AllReports] getCampaigns failed", err));
   }, []);
@@ -1455,7 +1456,7 @@ export function EquipesPage() {
         console.error("[Equipes] getCampaigns failed", err);
         toast.error(err?.message || "Impossible de charger les campagnes");
       });
-    getUsers().then(setUsers as any).catch(() => setUsers([]));
+    getUsersLite().then(setUsers as any).catch(() => setUsers([]));
   };
 
   useEffect(() => { loadEquipes(); }, []);
@@ -3011,7 +3012,7 @@ export function ExportPage() {
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    getCampaigns()
+    getCampaignsLite()
       .then(setCampaigns)
       .catch((err) => {
         console.error("[Export] getCampaigns failed", err);
@@ -3439,7 +3440,7 @@ export function ReportingCampagnesPage() {
   const [dateTo, setDateTo] = useState(today);
 
   useEffect(() => {
-    getCampaigns()
+    getCampaignsLite()
       .then(setCampaigns)
       .catch((err) => console.error("[ReportingCampagnes] getCampaigns failed", err));
   }, []);

@@ -96,7 +96,7 @@ export function AppLayout() {
       clearInterval(interval);
       document.removeEventListener("visibilitychange", onVisible);
     };
-  }, [location.pathname, user?.id]);
+  }, [user?.id]);
 
   return (
     <div className="layout">
