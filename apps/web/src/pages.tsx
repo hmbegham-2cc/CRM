@@ -3430,9 +3430,21 @@ interface CampaignSummary {
   conversionRate: string;
 }
 
+interface DailySummary {
+  date: string;
+  workers: string[];
+  incomingTotal: number;
+  outgoingTotal: number;
+  handled: number;
+  missed: number;
+  rdvTotal: number;
+  smsTotal: number;
+}
+
 export function ReportingCampagnesPage() {
   const { user } = useAuth();
   const [summaries, setSummaries] = useState<CampaignSummary[]>([]);
+  const [dailySummaries, setDailySummaries] = useState<DailySummary[]>([]);
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [loading, setLoading] = useState(false);
   const today = new Date().toISOString().slice(0, 10);
@@ -3440,6 +3452,11 @@ export function ReportingCampagnesPage() {
   const [dateFrom, setDateFrom] = useState(thirtyDaysAgo);
   const [dateTo, setDateTo] = useState(today);
   const [campaignId, setCampaignId] = useState("");
+
+  const selectedCampaign = useMemo(() => {
+    if (!campaignId) return null;
+    return campaigns.find((c) => c.id === campaignId) || null;
+  }, [campaignId, campaigns]);
 
   useEffect(() => {
     getCampaignsLite()
@@ -3457,6 +3474,49 @@ export function ReportingCampagnesPage() {
       if (campaignId) filters.campaignId = campaignId;
 
       const reports = await getReports(filters);
+
+      if (campaignId) {
+        const byDate: Record<string, DailySummary> = {};
+        const workersByDate: Record<string, Set<string>> = {};
+
+        reports.forEach((r) => {
+          const d = r.date;
+          if (!d) return;
+          if (!byDate[d]) {
+            byDate[d] = {
+              date: d,
+              workers: [],
+              incomingTotal: 0,
+              outgoingTotal: 0,
+              handled: 0,
+              missed: 0,
+              rdvTotal: 0,
+              smsTotal: 0,
+            };
+          }
+          if (!workersByDate[d]) workersByDate[d] = new Set<string>();
+          const worker = (r.user?.name || r.user?.email || "Inconnu").trim();
+          if (worker) workersByDate[d].add(worker);
+
+          byDate[d].incomingTotal += Number(r.incomingTotal) || 0;
+          byDate[d].outgoingTotal += Number(r.outgoingTotal) || 0;
+          byDate[d].handled += Number(r.handled) || 0;
+          byDate[d].missed += Number(r.missed) || 0;
+          byDate[d].rdvTotal += Number(r.rdvTotal) || 0;
+          byDate[d].smsTotal += Number(r.smsTotal) || 0;
+        });
+
+        const result = Object.values(byDate)
+          .map((d) => ({
+            ...d,
+            workers: Array.from(workersByDate[d.date] || []).sort((a, b) => a.localeCompare(b, 'fr')),
+          }))
+          .sort((a, b) => b.date.localeCompare(a.date));
+
+        setDailySummaries(result);
+        setSummaries([]);
+        return;
+      }
 
       // Group by campaign
       const byCampaign: Record<string, CampaignSummary> = {};
@@ -3501,6 +3561,7 @@ export function ReportingCampagnesPage() {
       // Sort by report count desc
       result.sort((a, b) => b.reportCount - a.reportCount);
       setSummaries(result);
+      setDailySummaries([]);
     } catch (err: any) {
       console.error("[ReportingCampagnes] load failed", err);
       toast.error(err?.message || "Impossible de charger les données");
@@ -3518,25 +3579,27 @@ export function ReportingCampagnesPage() {
     const isSingle = !!campaignId;
 
     const headers = isSingle
-      ? ["Début", "Fin", "Campagne", "Agents", "Reçus", "Émis", "Traités", "Manqués", "RDV", "SMS"]
+      ? ["Date", "Campagne", "Agents", "Reçus", "Émis", "Traités", "Manqués", "RDV", "SMS"]
       : ["Campagne", "Agents", "Reçus", "Émis", "Traités", "Manqués", "RDV", "SMS"];
 
-    const rows = summaries.map((s) => {
-      const agents = (s.workers || []).join(" | ");
-      return isSingle
-        ? [
-          dateFrom || "",
-          dateTo || "",
-          s.campaignName,
+    const rows = isSingle
+      ? dailySummaries.map((d) => {
+        const agents = (d.workers || []).join(" | ");
+        return [
+          d.date,
+          selectedCampaign?.name || "",
           agents,
-          s.incomingTotal,
-          s.outgoingTotal,
-          s.handled,
-          s.missed,
-          s.rdvTotal,
-          s.smsTotal,
-        ]
-        : [
+          d.incomingTotal,
+          d.outgoingTotal,
+          d.handled,
+          d.missed,
+          d.rdvTotal,
+          d.smsTotal,
+        ];
+      })
+      : summaries.map((s) => {
+        const agents = (s.workers || []).join(" | ");
+        return [
           s.campaignName,
           agents,
           s.incomingTotal,
@@ -3546,12 +3609,26 @@ export function ReportingCampagnesPage() {
           s.rdvTotal,
           s.smsTotal,
         ];
-    });
+      });
 
     // Add TOTAL row when exporting all campaigns
     if (!isSingle && rows.length > 0) {
       rows.push([
         "TOTAL",
+        "",
+        totals.incomingTotal,
+        totals.outgoingTotal,
+        totals.handled,
+        totals.missed,
+        totals.rdvTotal,
+        totals.smsTotal,
+      ]);
+    }
+
+    if (isSingle && rows.length > 0) {
+      rows.push([
+        "TOTAL",
+        selectedCampaign?.name || "",
         "",
         totals.incomingTotal,
         totals.outgoingTotal,
@@ -3578,6 +3655,21 @@ export function ReportingCampagnesPage() {
   };
 
   const totals = useMemo(() => {
+    if (campaignId) {
+      return dailySummaries.reduce(
+        (acc, d) => ({
+          reportCount: acc.reportCount,
+          incomingTotal: acc.incomingTotal + d.incomingTotal,
+          outgoingTotal: acc.outgoingTotal + d.outgoingTotal,
+          handled: acc.handled + d.handled,
+          missed: acc.missed + d.missed,
+          rdvTotal: acc.rdvTotal + d.rdvTotal,
+          smsTotal: acc.smsTotal + d.smsTotal,
+        }),
+        { reportCount: 0, incomingTotal: 0, outgoingTotal: 0, handled: 0, missed: 0, rdvTotal: 0, smsTotal: 0 }
+      );
+    }
+
     return summaries.reduce(
       (acc, s) => ({
         reportCount: acc.reportCount + s.reportCount,
@@ -3590,7 +3682,7 @@ export function ReportingCampagnesPage() {
       }),
       { reportCount: 0, incomingTotal: 0, outgoingTotal: 0, handled: 0, missed: 0, rdvTotal: 0, smsTotal: 0 }
     );
-  }, [summaries]);
+  }, [campaignId, dailySummaries, summaries]);
 
   const totalConversion = totals.handled > 0 ? ((totals.rdvTotal / totals.handled) * 100).toFixed(1) : '0.0';
 
@@ -3649,7 +3741,11 @@ export function ReportingCampagnesPage() {
             <Search size={18} />
             {loading ? "Chargement..." : "Actualiser"}
           </button>
-          <button className="btn btn-secondary" onClick={handleExportCSV} disabled={summaries.length === 0}>
+          <button
+            className="btn btn-secondary"
+            onClick={handleExportCSV}
+            disabled={campaignId ? dailySummaries.length === 0 : summaries.length === 0}
+          >
             <Download size={18} />
             Export CSV
           </button>
@@ -3660,17 +3756,23 @@ export function ReportingCampagnesPage() {
         <div className="card" style={{ textAlign: "center", padding: "48px" }}>
           Chargement...
         </div>
-      ) : summaries.length === 0 ? (
+      ) : (campaignId ? dailySummaries.length === 0 : summaries.length === 0) ? (
         <div className="card" style={{ textAlign: "center", padding: "48px" }}>
           <p className="muted">Aucune donnée disponible pour la période sélectionnée.</p>
         </div>
       ) : (
         <div className="card" style={{ overflowX: "auto", padding: 0 }}>
+          {campaignId ? (
+            <div style={{ padding: "16px 16px 0 16px" }}>
+              <div style={{ fontWeight: 700, fontSize: 16 }}>
+                Rapport du {dateFrom ? new Date(dateFrom).toLocaleDateString('fr-FR') : ""} au {dateTo ? new Date(dateTo).toLocaleDateString('fr-FR') : ""} — {selectedCampaign?.name || ""}
+              </div>
+            </div>
+          ) : null}
           <table style={{ margin: 0, minWidth: "900px" }}>
             <thead>
               <tr>
-                {campaignId ? <th>Début</th> : null}
-                {campaignId ? <th>Fin</th> : null}
+                {campaignId ? <th>Date</th> : null}
                 <th>Campagne</th>
                 <th>Agents</th>
                 <th style={{ textAlign: "right" }}>Reçus</th>
@@ -3682,24 +3784,40 @@ export function ReportingCampagnesPage() {
               </tr>
             </thead>
             <tbody>
-              {summaries.map((s) => (
-                <tr key={s.campaignId}>
-                  {campaignId ? <td>{dateFrom ? new Date(dateFrom).toLocaleDateString('fr-FR') : ""}</td> : null}
-                  {campaignId ? <td>{dateTo ? new Date(dateTo).toLocaleDateString('fr-FR') : ""}</td> : null}
-                  <td style={{ fontWeight: 600 }}>{s.campaignName}</td>
-                  <td style={{ fontSize: 12, color: 'var(--text-muted)' }}>{(s.workers || []).join(", ")}</td>
-                  <td style={{ textAlign: "right" }}>{s.incomingTotal.toLocaleString('fr-FR')}</td>
-                  <td style={{ textAlign: "right" }}>{s.outgoingTotal.toLocaleString('fr-FR')}</td>
-                  <td style={{ textAlign: "right" }}>{s.handled.toLocaleString('fr-FR')}</td>
-                  <td style={{ textAlign: "right", color: s.missed > 0 ? 'var(--danger)' : undefined }}>
-                    {s.missed.toLocaleString('fr-FR')}
-                  </td>
-                  <td style={{ textAlign: "right", color: 'var(--success)' }}>
-                    {s.rdvTotal.toLocaleString('fr-FR')}
-                  </td>
-                  <td style={{ textAlign: "right" }}>{s.smsTotal.toLocaleString('fr-FR')}</td>
-                </tr>
-              ))}
+              {campaignId
+                ? dailySummaries.map((d) => (
+                  <tr key={d.date}>
+                    <td>{new Date(d.date).toLocaleDateString('fr-FR')}</td>
+                    <td style={{ fontWeight: 600 }}>{selectedCampaign?.name || ""}</td>
+                    <td style={{ fontSize: 12, color: 'var(--text-muted)' }}>{(d.workers || []).join(", ")}</td>
+                    <td style={{ textAlign: "right" }}>{d.incomingTotal.toLocaleString('fr-FR')}</td>
+                    <td style={{ textAlign: "right" }}>{d.outgoingTotal.toLocaleString('fr-FR')}</td>
+                    <td style={{ textAlign: "right" }}>{d.handled.toLocaleString('fr-FR')}</td>
+                    <td style={{ textAlign: "right", color: d.missed > 0 ? 'var(--danger)' : undefined }}>
+                      {d.missed.toLocaleString('fr-FR')}
+                    </td>
+                    <td style={{ textAlign: "right", color: 'var(--success)' }}>
+                      {d.rdvTotal.toLocaleString('fr-FR')}
+                    </td>
+                    <td style={{ textAlign: "right" }}>{d.smsTotal.toLocaleString('fr-FR')}</td>
+                  </tr>
+                ))
+                : summaries.map((s) => (
+                  <tr key={s.campaignId}>
+                    <td style={{ fontWeight: 600 }}>{s.campaignName}</td>
+                    <td style={{ fontSize: 12, color: 'var(--text-muted)' }}>{(s.workers || []).join(", ")}</td>
+                    <td style={{ textAlign: "right" }}>{s.incomingTotal.toLocaleString('fr-FR')}</td>
+                    <td style={{ textAlign: "right" }}>{s.outgoingTotal.toLocaleString('fr-FR')}</td>
+                    <td style={{ textAlign: "right" }}>{s.handled.toLocaleString('fr-FR')}</td>
+                    <td style={{ textAlign: "right", color: s.missed > 0 ? 'var(--danger)' : undefined }}>
+                      {s.missed.toLocaleString('fr-FR')}
+                    </td>
+                    <td style={{ textAlign: "right", color: 'var(--success)' }}>
+                      {s.rdvTotal.toLocaleString('fr-FR')}
+                    </td>
+                    <td style={{ textAlign: "right" }}>{s.smsTotal.toLocaleString('fr-FR')}</td>
+                  </tr>
+                ))}
               {!campaignId ? (
                 <tr style={{ borderTop: "2px solid var(--border)", background: "#f8fafc" }}>
                   <td style={{ fontWeight: 700 }}>TOTAL</td>
@@ -3715,7 +3833,23 @@ export function ReportingCampagnesPage() {
                   </td>
                   <td style={{ textAlign: "right", fontWeight: 700 }}>{totals.smsTotal.toLocaleString('fr-FR')}</td>
                 </tr>
-              ) : null}
+              ) : (
+                <tr style={{ borderTop: "2px solid var(--border)", background: "#f8fafc" }}>
+                  <td style={{ fontWeight: 700 }}>TOTAL</td>
+                  <td style={{ fontWeight: 700 }}>{selectedCampaign?.name || ""}</td>
+                  <td />
+                  <td style={{ textAlign: "right", fontWeight: 700 }}>{totals.incomingTotal.toLocaleString('fr-FR')}</td>
+                  <td style={{ textAlign: "right", fontWeight: 700 }}>{totals.outgoingTotal.toLocaleString('fr-FR')}</td>
+                  <td style={{ textAlign: "right", fontWeight: 700 }}>{totals.handled.toLocaleString('fr-FR')}</td>
+                  <td style={{ textAlign: "right", fontWeight: 700, color: totals.missed > 0 ? 'var(--danger)' : undefined }}>
+                    {totals.missed.toLocaleString('fr-FR')}
+                  </td>
+                  <td style={{ textAlign: "right", fontWeight: 700, color: 'var(--success)' }}>
+                    {totals.rdvTotal.toLocaleString('fr-FR')}
+                  </td>
+                  <td style={{ textAlign: "right", fontWeight: 700 }}>{totals.smsTotal.toLocaleString('fr-FR')}</td>
+                </tr>
+              )}
             </tbody>
           </table>
         </div>
