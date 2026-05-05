@@ -3447,6 +3447,7 @@ export function ReportingCampagnesPage() {
   const [dailySummaries, setDailySummaries] = useState<DailySummary[]>([]);
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [loading, setLoading] = useState(false);
+  const reportingRef = useRef<HTMLDivElement | null>(null);
   const today = new Date().toISOString().slice(0, 10);
   const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
   const [dateFrom, setDateFrom] = useState(thirtyDaysAgo);
@@ -3579,7 +3580,7 @@ export function ReportingCampagnesPage() {
     const isSingle = !!campaignId;
 
     const headers = isSingle
-      ? ["Date", "Campagne", "Agents", "Reçus", "Émis", "Traités", "Manqués", "RDV", "SMS"]
+      ? ["Date", "Agents", "Reçus", "Émis", "Traités", "Manqués", "RDV", "SMS"]
       : ["Campagne", "Agents", "Reçus", "Émis", "Traités", "Manqués", "RDV", "SMS"];
 
     const rows = isSingle
@@ -3587,7 +3588,6 @@ export function ReportingCampagnesPage() {
         const agents = (d.workers || []).join(" | ");
         return [
           d.date,
-          selectedCampaign?.name || "",
           agents,
           d.incomingTotal,
           d.outgoingTotal,
@@ -3628,7 +3628,6 @@ export function ReportingCampagnesPage() {
     if (isSingle && rows.length > 0) {
       rows.push([
         "TOTAL",
-        selectedCampaign?.name || "",
         "",
         totals.incomingTotal,
         totals.outgoingTotal,
@@ -3652,6 +3651,48 @@ export function ReportingCampagnesPage() {
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
     toast.success("Export CSV téléchargé");
+  };
+
+  const handleExportPDF = async () => {
+    if (!reportingRef.current) return;
+    const tId = toast.loading("Génération du PDF...");
+    try {
+      const canvas = await html2canvas(reportingRef.current, {
+        scale: 2,
+        useCORS: true,
+        logging: false,
+        backgroundColor: "#ffffff",
+      });
+      const imgData = canvas.toDataURL("image/png");
+      const pdf = new jsPDF("p", "mm", "a4");
+
+      const pdfWidth = pdf.internal.pageSize.getWidth();
+      const pageHeight = pdf.internal.pageSize.getHeight();
+
+      const imgProps = pdf.getImageProperties(imgData);
+      const pdfHeight = (imgProps.height * pdfWidth) / imgProps.width;
+
+      let position = 0;
+      pdf.addImage(imgData, "PNG", 0, position, pdfWidth, pdfHeight);
+      let heightLeft = pdfHeight - pageHeight;
+
+      while (heightLeft > 0) {
+        position = position - pageHeight;
+        pdf.addPage();
+        pdf.addImage(imgData, "PNG", 0, position, pdfWidth, pdfHeight);
+        heightLeft -= pageHeight;
+      }
+
+      const datePart = dateFrom && dateTo ? `_${dateFrom}_${dateTo}` : "";
+      const campaignPart = campaignId ? `_${campaignId}` : "";
+      pdf.save(`reporting_campagnes${campaignPart}${datePart}.pdf`);
+      toast.success("Export PDF téléchargé");
+    } catch (err: any) {
+      console.error("[ReportingCampagnes] export pdf failed", err);
+      toast.error(err?.message || "Impossible de générer le PDF");
+    } finally {
+      toast.dismiss(tId);
+    }
   };
 
   const totals = useMemo(() => {
@@ -3749,6 +3790,14 @@ export function ReportingCampagnesPage() {
             <Download size={18} />
             Export CSV
           </button>
+          <button
+            className="btn btn-secondary"
+            onClick={handleExportPDF}
+            disabled={campaignId ? dailySummaries.length === 0 : summaries.length === 0}
+          >
+            <Download size={18} />
+            Export PDF
+          </button>
         </div>
       </div>
 
@@ -3762,18 +3811,41 @@ export function ReportingCampagnesPage() {
         </div>
       ) : (
         <div className="card" style={{ overflowX: "auto", padding: 0 }}>
-          {campaignId ? (
-            <div style={{ padding: "16px 16px 0 16px" }}>
-              <div style={{ fontWeight: 700, fontSize: 16 }}>
-                Rapport du {dateFrom ? new Date(dateFrom).toLocaleDateString('fr-FR') : ""} au {dateTo ? new Date(dateTo).toLocaleDateString('fr-FR') : ""} — {selectedCampaign?.name || ""}
+          <div ref={reportingRef} style={{ padding: 16 }}>
+            {campaignId ? (
+              <div style={{ marginBottom: 12 }}>
+                <div style={{ fontWeight: 800, fontSize: 18, marginBottom: 4 }}>
+                  Rapport du {dateFrom ? new Date(dateFrom).toLocaleDateString('fr-FR') : ""} au {dateTo ? new Date(dateTo).toLocaleDateString('fr-FR') : ""}
+                </div>
+                <div className="muted" style={{ fontSize: 13 }}>
+                  Campagne : <span style={{ fontWeight: 700, color: "var(--text)" }}>{selectedCampaign?.name || ""}</span>
+                </div>
+                <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 10 }}>
+                  <div className="card" style={{ padding: "10px 12px", minWidth: 160 }}>
+                    <div className="muted" style={{ fontSize: 12 }}>Reçus</div>
+                    <div style={{ fontWeight: 800, fontSize: 16 }}>{totals.incomingTotal.toLocaleString('fr-FR')}</div>
+                  </div>
+                  <div className="card" style={{ padding: "10px 12px", minWidth: 160 }}>
+                    <div className="muted" style={{ fontSize: 12 }}>Émis</div>
+                    <div style={{ fontWeight: 800, fontSize: 16 }}>{totals.outgoingTotal.toLocaleString('fr-FR')}</div>
+                  </div>
+                  <div className="card" style={{ padding: "10px 12px", minWidth: 160 }}>
+                    <div className="muted" style={{ fontSize: 12 }}>Traités</div>
+                    <div style={{ fontWeight: 800, fontSize: 16 }}>{totals.handled.toLocaleString('fr-FR')}</div>
+                  </div>
+                  <div className="card" style={{ padding: "10px 12px", minWidth: 160 }}>
+                    <div className="muted" style={{ fontSize: 12 }}>RDV</div>
+                    <div style={{ fontWeight: 800, fontSize: 16, color: 'var(--success)' }}>{totals.rdvTotal.toLocaleString('fr-FR')}</div>
+                  </div>
+                </div>
               </div>
-            </div>
-          ) : null}
-          <table style={{ margin: 0, minWidth: "900px" }}>
+            ) : null}
+
+            <table style={{ margin: 0, minWidth: campaignId ? "860px" : "900px" }}>
             <thead>
               <tr>
                 {campaignId ? <th>Date</th> : null}
-                <th>Campagne</th>
+                {!campaignId ? <th>Campagne</th> : null}
                 <th>Agents</th>
                 <th style={{ textAlign: "right" }}>Reçus</th>
                 <th style={{ textAlign: "right" }}>Émis</th>
@@ -3788,7 +3860,6 @@ export function ReportingCampagnesPage() {
                 ? dailySummaries.map((d) => (
                   <tr key={d.date}>
                     <td>{new Date(d.date).toLocaleDateString('fr-FR')}</td>
-                    <td style={{ fontWeight: 600 }}>{selectedCampaign?.name || ""}</td>
                     <td style={{ fontSize: 12, color: 'var(--text-muted)' }}>{(d.workers || []).join(", ")}</td>
                     <td style={{ textAlign: "right" }}>{d.incomingTotal.toLocaleString('fr-FR')}</td>
                     <td style={{ textAlign: "right" }}>{d.outgoingTotal.toLocaleString('fr-FR')}</td>
@@ -3836,7 +3907,6 @@ export function ReportingCampagnesPage() {
               ) : (
                 <tr style={{ borderTop: "2px solid var(--border)", background: "#f8fafc" }}>
                   <td style={{ fontWeight: 700 }}>TOTAL</td>
-                  <td style={{ fontWeight: 700 }}>{selectedCampaign?.name || ""}</td>
                   <td />
                   <td style={{ textAlign: "right", fontWeight: 700 }}>{totals.incomingTotal.toLocaleString('fr-FR')}</td>
                   <td style={{ textAlign: "right", fontWeight: 700 }}>{totals.outgoingTotal.toLocaleString('fr-FR')}</td>
@@ -3851,7 +3921,8 @@ export function ReportingCampagnesPage() {
                 </tr>
               )}
             </tbody>
-          </table>
+            </table>
+          </div>
         </div>
       )}
     </div>
