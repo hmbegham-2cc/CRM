@@ -93,6 +93,7 @@ serve(async (req) => {
     //    generateLink creates auth.users (trigger *should* insert public.User)
     //    but if the trigger was never deployed, UPDATE touches 0 rows and the
     //    invited user can never log in. Upsert fixes both cases.
+    const now = new Date().toISOString();
     const { error: userErr } = await supabase.from("User").upsert(
       {
         id: userId,
@@ -101,6 +102,8 @@ serve(async (req) => {
         role,
         active: true,
         deletedAt: null,
+        createdAt: now,
+        updatedAt: now,
       },
       { onConflict: "id" },
     );
