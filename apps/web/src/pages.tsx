@@ -305,7 +305,7 @@ export function RapportPage() {
           { id: "handled", label: "Appels traités (Auto)", icon: CheckSquare, key: "handled", disabled: true },
           { id: "missed", label: "Appels manqués", icon: PhoneMissed, key: "missed" },
           { id: "rdvTotal", label: "Nombre de RDV", icon: ClipboardCheck, key: "rdvTotal" },
-          { id: "smsTotal", label: "Nombre de SMS", icon: MessageSquare, key: "smsTotal" },
+          { id: "smsTotal", label: "Nombre de messages envoyés", icon: MessageSquare, key: "smsTotal" },
         ].map((item) => (
           <div className="field" style={{ minWidth: 0 }} key={item.id}>
             <label className="label" htmlFor={item.id}>
@@ -585,7 +585,7 @@ export function ValidationPage() {
                     <div style={{ fontWeight: 800, color: "var(--accent)" }}>{r.rdvTotal}</div>
                   </div>
                   <div style={{ textAlign: "center" }}>
-                    <div className="muted" style={{ fontSize: "10px", fontWeight: 700 }}>SMS</div>
+                    <div className="muted" style={{ fontSize: "10px", fontWeight: 700 }}>Messages envoyés</div>
                     <div style={{ fontWeight: 800, color: "var(--secondary)" }}>{r.smsTotal}</div>
                   </div>
                 </div>
@@ -3263,7 +3263,7 @@ function ReportsTable({ title, reports }: { title: string; reports: DailyReport[
               <th>Traités</th>
               <th>Manqués</th>
               <th>RDV</th>
-              <th>SMS</th>
+              <th>Messages envoyés</th>
               <th>Statut</th>
             </tr>
           </thead>
@@ -3580,8 +3580,8 @@ export function ReportingCampagnesPage() {
     const isSingle = !!campaignId;
 
     const headers = isSingle
-      ? ["Date", "Agents", "Appels reçus", "Appels émis", "Appels traités", "Appels manqués", "RDV", "SMS"]
-      : ["Campagne", "Agents", "Appels reçus", "Appels émis", "Appels traités", "Appels manqués", "RDV", "SMS"];
+      ? ["Date", "Agents", "Appels reçus", "Appels émis", "Appels traités", "Appels manqués", "RDV", "Messages envoyés"]
+      : ["Campagne", "Agents", "Appels reçus", "Appels émis", "Appels traités", "Appels manqués", "RDV", "Messages envoyés"];
 
     const rows = isSingle
       ? dailySummaries.map((d) => {
@@ -3852,7 +3852,7 @@ export function ReportingCampagnesPage() {
                 <th style={{ textAlign: "right" }}>Appels traités</th>
                 <th style={{ textAlign: "right" }}>Appels manqués</th>
                 <th style={{ textAlign: "right" }}>RDV</th>
-                <th style={{ textAlign: "right" }}>SMS</th>
+                <th style={{ textAlign: "right" }}>Messages envoyés</th>
               </tr>
             </thead>
             <tbody>
