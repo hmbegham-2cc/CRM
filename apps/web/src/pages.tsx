@@ -95,6 +95,7 @@ type ReportFormState = {
   missed: number;
   rdvTotal: number;
   smsTotal: number;
+  connectionTime: number;
   observations: string;
 };
 
@@ -187,7 +188,8 @@ export function RapportPage() {
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [campaignId, setCampaignId] = useState("");
   const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
-  const [state, setState] = useState<ReportFormState>({ incomingTotal: 0, outgoingTotal: 0, handled: 0, missed: 0, rdvTotal: 0, smsTotal: 0, observations: "" });
+  const [state, setState] = useState<ReportFormState>({ incomingTotal: 0, outgoingTotal: 0, handled: 0, missed: 0, rdvTotal: 0, smsTotal: 0, connectionTime: 0, observations: "" });
+  const [connectionTimeText, setConnectionTimeText] = useState("0");
   
   useEffect(() => {
     setState(prev => ({
@@ -221,7 +223,7 @@ export function RapportPage() {
   async function save(submit = false) {
     setMessage("");
     if ([state.incomingTotal, state.outgoingTotal, state.handled, state.missed,
-         state.rdvTotal, state.smsTotal].some((n) => n < 0)) {
+         state.rdvTotal, state.smsTotal, state.connectionTime].some((n) => n < 0)) {
       const msg = "Les valeurs ne peuvent pas être négatives";
       toast.error(msg); setMessage("Erreur : " + msg);
       return;
@@ -306,6 +308,7 @@ export function RapportPage() {
           { id: "missed", label: "Appels manqués", icon: PhoneMissed, key: "missed" },
           { id: "rdvTotal", label: "Nombre de RDV", icon: ClipboardCheck, key: "rdvTotal" },
           { id: "smsTotal", label: "Nombre de messages envoyés", icon: MessageSquare, key: "smsTotal" },
+          { id: "connectionTime", label: "Temps de connexion(cf planning)", icon: Clock, key: "connectionTime" },
         ].map((item) => (
           <div className="field" style={{ minWidth: 0 }} key={item.id}>
             <label className="label" htmlFor={item.id}>
@@ -316,14 +319,20 @@ export function RapportPage() {
               id={item.id}
               className="input"
               type="text"
-              inputMode="numeric"
-              pattern="[0-9]*"
+              inputMode={item.key === "connectionTime" ? "decimal" : "numeric"}
+              pattern={item.key === "connectionTime" ? "[0-9]*[.,]?[0-9]*" : "[0-9]*"}
               disabled={(item as any).disabled}
               style={(item as any).disabled ? { background: '#f8fafc', cursor: 'not-allowed', fontWeight: 700, color: 'var(--primary)' } : {}}
-              value={state[item.key as keyof ReportFormState]}
+              value={item.key === "connectionTime" ? connectionTimeText : state[item.key as keyof ReportFormState]}
               onChange={(e) => {
-                const val = e.target.value.replace(/[^0-9]/g, '');
-                setState((p) => ({ ...p, [item.key]: val === '' ? 0 : parseInt(val) }));
+                if (item.key === "connectionTime") {
+                  const val = e.target.value.replace(',', '.').replace(/[^0-9.]/g, '');
+                  setConnectionTimeText(val);
+                  setState((p) => ({ ...p, connectionTime: val === '' || val === '.' ? 0 : parseFloat(val) || 0 }));
+                } else {
+                  const val = e.target.value.replace(/[^0-9]/g, '');
+                  setState((p) => ({ ...p, [item.key]: val === '' ? 0 : parseInt(val) }));
+                }
               }}
               placeholder="0"
             />
@@ -3332,13 +3341,14 @@ function ReportsTable({ title, reports }: { title: string; reports: DailyReport[
               <th>Manqués</th>
               <th>RDV</th>
               <th>Messages envoyés</th>
+              <th>Temps de connexion(cf planning)</th>
               <th>Statut</th>
             </tr>
           </thead>
           <tbody>
             {reports.length === 0 ? (
               <tr>
-                <td colSpan={10} style={{ textAlign: "center", padding: "40px", color: "var(--text-muted)" }}>
+                <td colSpan={11} style={{ textAlign: "center", padding: "40px", color: "var(--text-muted)" }}>
                   Aucun rapport trouvé
                 </td>
               </tr>
@@ -3354,6 +3364,7 @@ function ReportsTable({ title, reports }: { title: string; reports: DailyReport[
                   <td style={{ color: r.missed > 0 ? "var(--danger)" : "inherit" }}>{r.missed}</td>
                   <td>{r.rdvTotal}</td>
                   <td>{r.smsTotal}</td>
+                  <td>{r.connectionTime ?? 0}h</td>
                   <td>
                     <span className={`badge ${getStatusBadgeClass(r.status)}`}>
                       {r.status}

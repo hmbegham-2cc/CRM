@@ -51,6 +51,26 @@ function worksheet(name: string, headers: string[], rows: unknown[][], used: Set
   return `<Worksheet ss:Name="${safeName}"><Table ss:ExpandedColumnCount="${colCount}" ss:ExpandedRowCount="${rowCount}">${headerRow}${dataRows}</Table></Worksheet>`;
 }
 
+function formatFrDate(value: unknown): string {
+  if (value == null || value === "") return "";
+  const raw = String(value).trim();
+  const ymd = raw.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!ymd) return raw;
+  const [, year, month, day] = ymd;
+  return `${day}/${month}/${year}`;
+}
+
+function formatStatus(status: unknown): string {
+  const map: Record<string, string> = {
+    VALIDATED: "OK",
+    SUBMITTED: "Soumis",
+    DRAFT: "Brouillon",
+    REJECTED: "Rejeté",
+  };
+  const key = String(status ?? "");
+  return map[key] ?? key;
+}
+
 function workbookXml(sheets: string[]) {
   return `<?xml version="1.0" encoding="UTF-8"?>
 <?mso-application progid="Excel.Sheet"?>
@@ -108,7 +128,7 @@ serve(async (req) => {
 
     const fields =
       `select=date,campaign:Campaign(id,name),user:User!userId(name,email),` +
-      `incomingTotal,outgoingTotal,handled,missed,rdvTotal,smsTotal,status,observations`;
+      `incomingTotal,outgoingTotal,handled,missed,rdvTotal,smsTotal,connectionTime,status,observations`;
 
     const filters: string[] = [];
     if (effectiveIds?.length === 1) {
@@ -138,11 +158,11 @@ serve(async (req) => {
 
     const HEADERS = [
       "Date", "Campagne", "Conseiller", "Reçus", "Émis",
-      "Traités", "Manqués", "RDV", "SMS", "Statut", "Observations",
+      "Traités", "Manqués", "RDV", "SMS", "Temps de connexion(cf planning)", "Statut", "Observations",
     ];
 
     const toRow = (r: any) => [
-      new Date(r.date + "T12:00:00").toLocaleDateString("fr-FR"),
+      formatFrDate(r.date),
       r.campaign?.name ?? "",
       r.user?.name ?? r.user?.email ?? "",
       r.incomingTotal ?? 0,
@@ -151,7 +171,8 @@ serve(async (req) => {
       r.missed ?? 0,
       r.rdvTotal ?? 0,
       r.smsTotal ?? 0,
-      r.status ?? "",
+      r.connectionTime ?? 0,
+      formatStatus(r.status),
       r.observations ?? "",
     ];
 
@@ -192,9 +213,9 @@ serve(async (req) => {
 
         // One sheet per campaign
         for (const [campName, campReports] of Object.entries(byCampaign)) {
-          const sheetHeaders = ["Date", "Conseiller", "Reçus", "Émis", "Traités", "Manqués", "RDV", "SMS", "Statut", "Observations"];
+          const sheetHeaders = ["Date", "Conseiller", "Reçus", "Émis", "Traités", "Manqués", "RDV", "SMS", "Temps de connexion(cf planning)", "Statut", "Observations"];
           const rows = campReports.map((r: any) => [
-            new Date(r.date + "T12:00:00").toLocaleDateString("fr-FR"),
+            formatFrDate(r.date),
             r.user?.name ?? r.user?.email ?? "",
             r.incomingTotal ?? 0,
             r.outgoingTotal ?? 0,
@@ -202,7 +223,8 @@ serve(async (req) => {
             r.missed ?? 0,
             r.rdvTotal ?? 0,
             r.smsTotal ?? 0,
-            r.status ?? "",
+            r.connectionTime ?? 0,
+            formatStatus(r.status),
             r.observations ?? "",
           ]);
           sheets.push(worksheet(campName, sheetHeaders, rows, usedSheetNames));
