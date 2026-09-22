@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { AuthProvider, useAuth } from "./auth";
 import { AppLayout } from "./layout";
+import { LoadingState } from "./components/Spinner";
 import { ErrorBoundary } from "./error-boundary";
 import { diag, classifyError, networkSnapshot } from "./lib/diag";
 import "./styles.css";
@@ -62,11 +63,7 @@ const ChangePasswordPage = lazyPage("ChangePasswordPage");
 const QualitePage = lazyPage("QualitePage");
 
 function PageFallback() {
-  return (
-    <div style={{ padding: 48, textAlign: "center", color: "#64748b" }}>
-      Chargement…
-    </div>
-  );
+  return <LoadingState label="Chargement…" />;
 }
 
 function RequireRole({ roles, children }: { roles: string[]; children: React.ReactNode }) {
@@ -84,7 +81,7 @@ function RequireRole({ roles, children }: { roles: string[]; children: React.Rea
 
 function ProtectedApp() {
   const { user, loading } = useAuth();
-  if (loading) return <div style={{ padding: 24 }}>Chargement...</div>;
+  if (loading) return <LoadingState label="Chargement..." />;
   if (!user) return <Navigate to="/login" replace />;
 
   return (

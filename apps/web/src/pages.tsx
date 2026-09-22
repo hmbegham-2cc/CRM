@@ -19,6 +19,7 @@ import { supabase } from "./supabase";
 import { useAsync } from "./hooks/useAsync";
 import { useReloadOnFocus } from "./hooks/useReloadOnFocus";
 import { ConfirmModal } from "./components/ConfirmModal";
+import { Spinner, LoadingState } from "./components/Spinner";
 import { diag } from "./lib/diag";
 import { toast } from "sonner";
 import jsPDF from "jspdf";
@@ -220,6 +221,7 @@ export function RapportPage() {
   }, [user?.id, user?.role]);
 
   const [busy, run] = useAsync();
+  const [pendingAction, setPendingAction] = useState<"draft" | "submit" | null>(null);
 
   async function save(submit = false) {
     setMessage("");
@@ -230,6 +232,7 @@ export function RapportPage() {
       return;
     }
 
+    setPendingAction(submit ? "submit" : "draft");
     await run(async () => {
       try {
         const report = await upsertReport({ date, campaignId, ...state });
@@ -248,6 +251,7 @@ export function RapportPage() {
         setMessage("Erreur : " + errorMsg);
       }
     });
+    setPendingAction(null);
   }
 
   return (
@@ -358,12 +362,12 @@ export function RapportPage() {
 
       <div className="row" style={{ marginTop: 24, borderTop: "1px solid var(--border)", paddingTop: "24px" }}>
         <button className="btn btn-secondary" disabled={!campaignId || busy} onClick={() => save(false)}>
-          <Save size={18} />
-          {busy ? "Enregistrement..." : "Enregistrer brouillon"}
+          {pendingAction === "draft" ? <Spinner size={18} /> : <Save size={18} />}
+          {pendingAction === "draft" ? "Enregistrement..." : "Enregistrer brouillon"}
         </button>
         <button className="btn btn-primary" disabled={!campaignId || busy} onClick={() => save(true)}>
-          <Send size={18} />
-          {busy ? "Soumission..." : "Soumettre le rapport"}
+          {pendingAction === "submit" ? <Spinner size={18} /> : <Send size={18} />}
+          {pendingAction === "submit" ? "Soumission..." : "Soumettre le rapport"}
         </button>
         {reportId && (
           <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8 }} className="muted">
@@ -431,8 +435,8 @@ export function MesSaisiesPage() {
       </div>
       
       {loading ? (
-        <div className="card" style={{ textAlign: "center", padding: "48px" }}>
-          <div className="muted">Chargement de vos rapports...</div>
+        <div className="card">
+          <LoadingState label="Chargement de vos rapports..." />
         </div>
       ) : (
         <ReportsTable title="Historique" reports={reports} />
@@ -476,15 +480,15 @@ export function ValidationPage() {
   useReloadOnFocus(load);
 
   const [rejectReasons, setRejectReasons] = useState<Record<string, string>>({});
-  const [acting, setActing] = useState<Set<string>>(new Set());
+  const [acting, setActing] = useState<Record<string, "validate" | "reject">>({});
 
   async function act(id: string, action: "validate" | "reject") {
-    if (acting.has(id)) return; // anti double-submit
+    if (acting[id]) return; // anti double-submit
     if (action === "reject" && !(rejectReasons[id] || "").trim()) {
       toast.error("Merci d'indiquer une raison de rejet");
       return;
     }
-    setActing((prev) => new Set(prev).add(id));
+    setActing((prev) => ({ ...prev, [id]: action }));
     try {
       await actionReport(id, action, action === "reject" ? rejectReasons[id] : undefined);
       setReports((prev) => prev.filter((r) => r.id !== id));
@@ -493,7 +497,7 @@ export function ValidationPage() {
     } catch (err: any) {
       toast.error(err.message || "Action impossible");
     } finally {
-      setActing((prev) => { const next = new Set(prev); next.delete(id); return next; });
+      setActing((prev) => { const next = { ...prev }; delete next[id]; return next; });
     }
   }
 
@@ -541,8 +545,8 @@ export function ValidationPage() {
       </div>
 
       {loading ? (
-        <div className="card" style={{ textAlign: "center", padding: "48px" }}>
-          <div className="muted">Recherche des rapports en attente...</div>
+        <div className="card">
+          <LoadingState label="Recherche des rapports en attente..." />
         </div>
       ) : reports.length === 0 ? (
         <div className="card" style={{ textAlign: "center", padding: "48px" }}>
@@ -623,19 +627,19 @@ export function ValidationPage() {
                   <button
                     className="btn btn-primary"
                     onClick={() => act(r.id, "validate")}
-                    disabled={acting.has(r.id)}
+                    disabled={!!acting[r.id]}
                     style={{ background: "var(--success)" }}
                   >
-                    <CheckSquare size={18} />
-                    {acting.has(r.id) ? "Validation..." : "Valider le rapport"}
+                    {acting[r.id] === "validate" ? <Spinner size={18} /> : <CheckSquare size={18} />}
+                    {acting[r.id] === "validate" ? "Validation..." : "Valider le rapport"}
                   </button>
                   <button
                     className="btn btn-danger"
                     onClick={() => act(r.id, "reject")}
-                    disabled={acting.has(r.id)}
+                    disabled={!!acting[r.id]}
                   >
-                    <AlertCircle size={18} />
-                    {acting.has(r.id) ? "Rejet..." : "Rejeter"}
+                    {acting[r.id] === "reject" ? <Spinner size={18} /> : <AlertCircle size={18} />}
+                    {acting[r.id] === "reject" ? "Rejet..." : "Rejeter"}
                   </button>
                 </div>
               </div>
@@ -1270,7 +1274,7 @@ export function AllReportsPage() {
       </div>
 
       {loading ? (
-        <div className="card" style={{ textAlign: "center", padding: "48px" }}>Chargement...</div>
+        <div className="card"><LoadingState label="Chargement..." /></div>
       ) : (
         <ReportsTable title="Liste des rapports" reports={reports} />
       )}
@@ -1333,14 +1337,14 @@ export function CampagnesPage() {
               }
             })}
           >
-            <Plus size={18} />
+            {busy ? <Spinner size={18} /> : <Plus size={18} />}
             {busy ? "Création..." : "Créer"}
           </button>
         </div>
       </div>
 
       {loading ? (
-        <div className="muted" style={{ textAlign: "center", padding: "24px" }}>Chargement...</div>
+        <LoadingState label="Chargement..." compact />
       ) : (
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: "16px" }}>
           {campaigns.map((c) => (
@@ -2099,8 +2103,8 @@ export function UtilisateursPage() {
           </div>
 
           {loading ? (
-            <div className="card" style={{ textAlign: "center", padding: "48px" }}>
-              <div className="muted">Chargement des utilisateurs...</div>
+            <div className="card">
+              <LoadingState label="Chargement des utilisateurs..." />
             </div>
           ) : displayMode === "LIST" ? (
             <div className="card users-list-card">
@@ -2414,6 +2418,7 @@ export function UtilisateursPage() {
                 style={{ marginTop: "8px", height: "44px" }}
                 disabled={busy}
               >
+                {busy && <Spinner size={14} style={{ marginRight: 6 }} />}
                 {busy ? "Envoi en cours..." : "Envoyer l'invitation"}
               </button>
             </form>
@@ -2667,8 +2672,8 @@ export function SetupPasswordPage() {
   if (loading && !sessionReady) {
     return (
       <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "var(--background)" }}>
-        <div className="card" style={{ textAlign: "center", padding: "48px" }}>
-          <div className="muted">Vérification de votre lien...</div>
+        <div className="card">
+          <LoadingState label="Vérification de votre lien..." />
         </div>
       </div>
     );
@@ -2694,6 +2699,7 @@ export function SetupPasswordPage() {
             <input className="input" type="password" value={confirm} onChange={e => setConfirm(e.target.value)} required />
           </div>
           <button type="submit" className="btn btn-primary" disabled={busy || !sessionReady}>
+            {busy && <Spinner size={14} style={{ marginRight: 6 }} />}
             {busy ? "Enregistrement..." : "Enregistrer et continuer"}
           </button>
           {msg && <p className="muted" style={{ color: msg.includes("Erreur") || msg.includes("invalide") ? "var(--danger)" : "var(--success)" }}>{msg}</p>}
@@ -2829,8 +2835,8 @@ export function NotificationsPage() {
       </div>
 
       {loading ? (
-        <div className="card" style={{ textAlign: "center", padding: "48px" }}>
-          <div className="muted">Chargement des notifications...</div>
+        <div className="card">
+          <LoadingState label="Chargement des notifications..." />
         </div>
       ) : (
         <div className="grid1" style={{ gap: "16px" }}>
@@ -2961,6 +2967,7 @@ export function ForgotPasswordPage() {
               <input className="input" type="email" placeholder="votre.email@2cconseil.com" value={email} onChange={(e) => setEmail(e.target.value)} required />
             </div>
             <button type="submit" className="btn btn-primary" style={{ height: "48px" }} disabled={loading}>
+              {loading && <Spinner size={14} style={{ marginRight: 6 }} />}
               {loading ? "Envoi en cours..." : "Envoyer le lien"}
             </button>
           </form>
@@ -3017,6 +3024,7 @@ export function ChangePasswordPage() {
           <input className="input" type="password" value={confirm} onChange={(e) => setConfirm(e.target.value)} required />
         </div>
         <button type="submit" className="btn btn-primary" disabled={loading}>
+          {loading && <Spinner size={14} style={{ marginRight: 6 }} />}
           {loading ? "Enregistrement..." : "Changer le mot de passe"}
         </button>
         {msg && <p style={{ color: msg.includes("Erreur") || msg.includes("correspondent") || msg.includes("incorrect") ? "var(--danger)" : "var(--success)", fontWeight: 600, fontSize: "14px" }}>{msg}</p>}
@@ -3337,7 +3345,10 @@ export function ExportPage() {
             onClick={doExport}
           >
             {busy ? (
-              <>Génération en cours...</>
+              <>
+                <Spinner size={18} />
+                Génération en cours...
+              </>
             ) : (
               <>
                 <Download size={18} />
@@ -3530,6 +3541,7 @@ export function LoginPage() {
               }
             }}
           >
+            {loading && <Spinner size={14} style={{ marginRight: 6 }} />}
             {loading ? "Connexion..." : "Se connecter"}
           </button>
         </div>
@@ -3939,7 +3951,7 @@ export function ReportingCampagnesPage() {
             />
           </div>
           <button className="btn btn-primary" onClick={load} disabled={loading}>
-            <Search size={18} />
+            {loading ? <Spinner size={18} /> : <Search size={18} />}
             {loading ? "Chargement..." : "Actualiser"}
           </button>
           <button
@@ -3962,8 +3974,8 @@ export function ReportingCampagnesPage() {
       </div>
 
       {loading ? (
-        <div className="card" style={{ textAlign: "center", padding: "48px" }}>
-          Chargement...
+        <div className="card">
+          <LoadingState label="Chargement..." />
         </div>
       ) : (campaignId ? dailySummaries.length === 0 : summaries.length === 0) ? (
         <div className="card" style={{ textAlign: "center", padding: "48px" }}>
