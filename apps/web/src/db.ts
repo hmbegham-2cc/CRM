@@ -528,6 +528,16 @@ export async function setUserActive(userId: string, active: boolean) {
   return data;
 }
 
+export async function updateUserName(userId: string, name: string) {
+  const { data, error } = await supabase.rpc("update_user_name", {
+    p_user_id: userId,
+    p_name: name,
+  });
+  if (error) fail(error, "Impossible de mettre à jour le nom");
+  if (data?.error) throw new Error(data.error);
+  return data;
+}
+
 export async function forgotPassword(email: string) {
   const { error } = await supabase.auth.resetPasswordForEmail(email, {
     redirectTo: `${window.location.origin}/setup-password`,

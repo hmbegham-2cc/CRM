@@ -12,7 +12,7 @@ import {
   submitReport, actionReport, getNotifications, markNotificationRead,
   markAllNotificationsRead, deleteNotification, deleteAllNotifications,
   inviteUser, forgotPassword, changePassword, setupPassword, exportReports,
-  resendInvite, deleteUser, setUserActive,
+  resendInvite, deleteUser, setUserActive, updateUserName,
 } from "./db";
 import { useAuth } from "./auth";
 import { supabase } from "./supabase";
@@ -58,7 +58,8 @@ import {
   Trash2,
   Check,
   ArrowUpRight,
-  ArrowDownRight
+  ArrowDownRight,
+  Pencil
 } from "lucide-react";
 
 import {
@@ -1995,6 +1996,8 @@ export function UtilisateursPage() {
   const [busy, run] = useAsync();
   const [toDelete, setToDelete] = useState<UserRow | null>(null);
   const [toToggle, setToToggle] = useState<UserRow | null>(null);
+  const [toRename, setToRename] = useState<UserRow | null>(null);
+  const [renameValue, setRenameValue] = useState("");
   const [displayMode, setDisplayMode] = useState<"CARDS" | "LIST">("CARDS");
 
   const load = () => {
@@ -2130,8 +2133,18 @@ export function UtilisateursPage() {
                                   {(u.name || u.email).charAt(0).toUpperCase()}
                                 </div>
                                 <div style={{ minWidth: 0 }}>
-                                  <div style={{ fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                                  <div style={{ fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", display: "flex", alignItems: "center", gap: 6 }}>
                                     {u.name ?? "Sans nom"}
+                                    {currentUser?.role === "ADMIN" && (
+                                      <button
+                                        className="btn-icon"
+                                        style={{ background: "none", border: "none", padding: 2, cursor: "pointer", color: "var(--text-muted)", display: "inline-flex" }}
+                                        title="Renommer"
+                                        onClick={() => { setToRename(u); setRenameValue(u.name ?? ""); }}
+                                      >
+                                        <Pencil size={13} />
+                                      </button>
+                                    )}
                                   </div>
                                   <div className="muted" style={{ fontSize: 12, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                                     {u.email}
@@ -2261,8 +2274,18 @@ export function UtilisateursPage() {
                       {(u.name || u.email).charAt(0).toUpperCase()}
                     </div>
                     <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontWeight: 700, fontSize: "16px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                      <div style={{ fontWeight: 700, fontSize: "16px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", display: "flex", alignItems: "center", gap: 6 }}>
                         {u.name ?? "Sans nom"}
+                        {currentUser?.role === "ADMIN" && (
+                          <button
+                            className="btn-icon"
+                            style={{ background: "none", border: "none", padding: 2, cursor: "pointer", color: "var(--text-muted)", display: "inline-flex", flexShrink: 0 }}
+                            title="Renommer"
+                            onClick={() => { setToRename(u); setRenameValue(u.name ?? ""); }}
+                          >
+                            <Pencil size={13} />
+                          </button>
+                        )}
                         {!isActive && (
                           <span className="badge" style={{ marginLeft: 8, fontSize: 10, background: "#e2e8f0", color: "#475569" }}>Désactivé</span>
                         )}
@@ -2513,6 +2536,44 @@ export function UtilisateursPage() {
             load();
           } catch (err: any) {
             toast.error(err.message || "Impossible de modifier l'état");
+          }
+        })}
+      />
+
+      <ConfirmModal
+        open={!!toRename}
+        title="Renommer l'utilisateur"
+        message={
+          <div>
+            <div className="muted" style={{ fontSize: 13, marginBottom: 10 }}>
+              {toRename?.email}
+            </div>
+            <input
+              className="input"
+              value={renameValue}
+              onChange={(e) => setRenameValue(e.target.value)}
+              autoFocus
+              placeholder="Nom complet"
+            />
+          </div>
+        }
+        confirmLabel="Enregistrer"
+        variant="primary"
+        busy={busy}
+        onCancel={() => setToRename(null)}
+        onConfirm={() => run(async () => {
+          if (!toRename) return;
+          if (!renameValue.trim()) {
+            toast.error("Le nom ne peut pas être vide");
+            return;
+          }
+          try {
+            await updateUserName(toRename.id, renameValue);
+            toast.success("Nom mis à jour");
+            setToRename(null);
+            load();
+          } catch (err: any) {
+            toast.error(err.message || "Impossible de mettre à jour le nom");
           }
         })}
       />
