@@ -939,6 +939,31 @@ ALTER TABLE public."DailyReport"
   ADD COLUMN IF NOT EXISTS "connectionTime" NUMERIC(5,2) NOT NULL DEFAULT 0;
 
 -- ============================================================
+-- 20. RPC: renommer un utilisateur (ADMIN uniquement)
+-- ============================================================
+CREATE OR REPLACE FUNCTION public.update_user_name(p_user_id UUID, p_name TEXT)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_trimmed TEXT := trim(p_name);
+BEGIN
+  IF public.current_user_role() <> 'ADMIN' THEN
+    RETURN jsonb_build_object('error', 'Accès refusé : admin uniquement');
+  END IF;
+  IF v_trimmed = '' THEN
+    RETURN jsonb_build_object('error', 'Le nom ne peut pas être vide');
+  END IF;
+
+  UPDATE public."User" SET name = v_trimmed, "updatedAt" = now() WHERE id = p_user_id;
+  RETURN jsonb_build_object('ok', true);
+END;
+$$;
+GRANT EXECUTE ON FUNCTION public.update_user_name(UUID, TEXT) TO authenticated;
+
+-- ============================================================
 -- 16. (Optional) pg_cron scheduling
 -- Enable pg_cron in Dashboard → Database → Extensions, then run:
 --
