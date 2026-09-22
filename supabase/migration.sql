@@ -933,6 +933,12 @@ CREATE POLICY "Coach and admin can upsert quality referential"
   WITH CHECK (public.current_user_role() IN ('ADMIN', 'COACH_QUALITE'));
 
 -- ============================================================
+-- 19. DailyReport — champ "Temps de connexion" (heures, décimal)
+-- ============================================================
+ALTER TABLE public."DailyReport"
+  ADD COLUMN IF NOT EXISTS "connectionTime" NUMERIC(5,2) NOT NULL DEFAULT 0;
+
+-- ============================================================
 -- 16. (Optional) pg_cron scheduling
 -- Enable pg_cron in Dashboard → Database → Extensions, then run:
 --

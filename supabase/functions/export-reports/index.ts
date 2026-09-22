@@ -128,7 +128,7 @@ serve(async (req) => {
 
     const fields =
       `select=date,campaign:Campaign(id,name),user:User!userId(name,email),` +
-      `incomingTotal,outgoingTotal,handled,missed,rdvTotal,smsTotal,status,observations`;
+      `incomingTotal,outgoingTotal,handled,missed,rdvTotal,smsTotal,connectionTime,status,observations`;
 
     const filters: string[] = [];
     if (effectiveIds?.length === 1) {
@@ -158,7 +158,7 @@ serve(async (req) => {
 
     const HEADERS = [
       "Date", "Campagne", "Conseiller", "Reçus", "Émis",
-      "Traités", "Manqués", "RDV", "SMS", "Statut", "Observations",
+      "Traités", "Manqués", "RDV", "SMS", "Temps de connexion(cf planning)", "Statut", "Observations",
     ];
 
     const toRow = (r: any) => [
@@ -171,6 +171,7 @@ serve(async (req) => {
       r.missed ?? 0,
       r.rdvTotal ?? 0,
       r.smsTotal ?? 0,
+      r.connectionTime ?? 0,
       formatStatus(r.status),
       r.observations ?? "",
     ];
@@ -212,7 +213,7 @@ serve(async (req) => {
 
         // One sheet per campaign
         for (const [campName, campReports] of Object.entries(byCampaign)) {
-          const sheetHeaders = ["Date", "Conseiller", "Reçus", "Émis", "Traités", "Manqués", "RDV", "SMS", "Statut", "Observations"];
+          const sheetHeaders = ["Date", "Conseiller", "Reçus", "Émis", "Traités", "Manqués", "RDV", "SMS", "Temps de connexion(cf planning)", "Statut", "Observations"];
           const rows = campReports.map((r: any) => [
             formatFrDate(r.date),
             r.user?.name ?? r.user?.email ?? "",
@@ -222,6 +223,7 @@ serve(async (req) => {
             r.missed ?? 0,
             r.rdvTotal ?? 0,
             r.smsTotal ?? 0,
+            r.connectionTime ?? 0,
             formatStatus(r.status),
             r.observations ?? "",
           ]);
