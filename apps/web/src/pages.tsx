@@ -1,5 +1,5 @@
 import {
-  useEffect, useMemo, useState, useRef,
+  useEffect, useMemo, useState, useRef, useCallback,
   Children, cloneElement, isValidElement,
   type ReactElement,
   type ReactNode,
@@ -1998,6 +1998,7 @@ export function UtilisateursPage() {
   const [toToggle, setToToggle] = useState<UserRow | null>(null);
   const [toRename, setToRename] = useState<UserRow | null>(null);
   const [renameValue, setRenameValue] = useState("");
+  const closeRename = useCallback(() => setToRename(null), []);
   const [displayMode, setDisplayMode] = useState<"CARDS" | "LIST">("CARDS");
 
   const load = () => {
@@ -2560,7 +2561,7 @@ export function UtilisateursPage() {
         confirmLabel="Enregistrer"
         variant="primary"
         busy={busy}
-        onCancel={() => setToRename(null)}
+        onCancel={closeRename}
         onConfirm={() => run(async () => {
           if (!toRename) return;
           if (!renameValue.trim()) {
