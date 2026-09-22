@@ -20,6 +20,7 @@ import {
   UserCircle,
 } from "lucide-react";
 import type { Campaign, QualityEvaluation, QualityReferentialConfig } from "@crc/types";
+import { Spinner, LoadingState } from "./components/Spinner";
 import { useAuth } from "./auth";
 import {
   deleteQualityEvaluation,
@@ -448,7 +449,7 @@ export function QualitePage() {
           </div>
           <div className="quality-filters-actions">
             <button type="button" className="btn btn-primary" onClick={loadEvaluations} disabled={loading}>
-              <Search size={16} />
+              {loading ? <Spinner size={16} /> : <Search size={16} />}
               {loading ? "Chargement..." : "Appliquer"}
             </button>
           </div>
@@ -743,7 +744,7 @@ export function QualitePage() {
       {tab === "liste" && (
         <div>
           {loading ? (
-            <p className="quality-empty">Chargement...</p>
+            <div className="quality-empty"><LoadingState label="Chargement..." compact /></div>
           ) : evaluations.length === 0 ? (
             <div className="card quality-empty">
               <p>Aucune écoute sur la période.</p>
@@ -891,7 +892,7 @@ export function QualitePage() {
 
               <div className="quality-form-actions">
                 <button type="button" className="btn btn-primary" disabled={busy || !formAgentId} onClick={handleSave}>
-                  <Save size={18} />
+                  {busy ? <Spinner size={18} /> : <Save size={18} />}
                   {busy ? "..." : "Enregistrer"}
                 </button>
                 {tab === "detail" && (
