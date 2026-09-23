@@ -357,6 +357,7 @@ export async function upsertReport(reportData: {
   missed: number;
   rdvTotal: number;
   smsTotal: number;
+  dmt: number;
   connectionTime: number;
   observations?: string;
 }): Promise<{ id: string }> {

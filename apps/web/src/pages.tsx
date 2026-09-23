@@ -60,7 +60,8 @@ import {
   Check,
   ArrowUpRight,
   ArrowDownRight,
-  Pencil
+  Pencil,
+  Timer
 } from "lucide-react";
 
 import {
@@ -97,6 +98,7 @@ type ReportFormState = {
   missed: number;
   rdvTotal: number;
   smsTotal: number;
+  dmt: number;
   connectionTime: number;
   observations: string;
 };
@@ -185,13 +187,37 @@ export function HomePage() {
   );
 }
 
+function formatMmSsDigits(digits: string) {
+  const d = digits.slice(-4);
+  if (d.length <= 2) return d;
+  return `${d.slice(0, d.length - 2)}:${d.slice(-2)}`;
+}
+
+function mmSsDigitsToSeconds(digits: string) {
+  const d = digits.slice(-4);
+  const secPart = d.length > 0 ? d.slice(-2) : "0";
+  const minPart = d.length > 2 ? d.slice(0, d.length - 2) : "0";
+  return (parseInt(minPart, 10) || 0) * 60 + (parseInt(secPart, 10) || 0);
+}
+
+function secondsToMmSs(totalSeconds: number) {
+  const s = Math.max(0, Math.round(totalSeconds || 0));
+  const mm = Math.floor(s / 60);
+  const ss = s % 60;
+  return `${String(mm).padStart(2, "0")}:${String(ss).padStart(2, "0")}`;
+}
+
 export function RapportPage() {
   const { user } = useAuth();
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [campaignId, setCampaignId] = useState("");
   const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
-  const [state, setState] = useState<ReportFormState>({ incomingTotal: 0, outgoingTotal: 0, handled: 0, missed: 0, rdvTotal: 0, smsTotal: 0, connectionTime: 0, observations: "" });
+  const [state, setState] = useState<ReportFormState>({ incomingTotal: 0, outgoingTotal: 0, handled: 0, missed: 0, rdvTotal: 0, smsTotal: 0, dmt: 0, connectionTime: 0, observations: "" });
   const [connectionTimeText, setConnectionTimeText] = useState("0");
+  const [dmtDigits, setDmtDigits] = useState("");
+  const decimalFields: Partial<Record<keyof ReportFormState, [string, (v: string) => void]>> = {
+    connectionTime: [connectionTimeText, setConnectionTimeText],
+  };
   
   useEffect(() => {
     setState(prev => ({
@@ -226,7 +252,7 @@ export function RapportPage() {
   async function save(submit = false) {
     setMessage("");
     if ([state.incomingTotal, state.outgoingTotal, state.handled, state.missed,
-         state.rdvTotal, state.smsTotal, state.connectionTime].some((n) => n < 0)) {
+         state.rdvTotal, state.smsTotal, state.dmt, state.connectionTime].some((n) => n < 0)) {
       const msg = "Les valeurs ne peuvent pas être négatives";
       toast.error(msg); setMessage("Erreur : " + msg);
       return;
@@ -313,8 +339,12 @@ export function RapportPage() {
           { id: "missed", label: "Appels manqués", icon: PhoneMissed, key: "missed" },
           { id: "rdvTotal", label: "Nombre de RDV", icon: ClipboardCheck, key: "rdvTotal" },
           { id: "smsTotal", label: "Nombre de messages envoyés", icon: MessageSquare, key: "smsTotal" },
+          { id: "dmt", label: "DMT (Durée Moyenne de Traitement)", icon: Timer, key: "dmt" },
           { id: "connectionTime", label: "Temps de connexion(cf planning)", icon: Clock, key: "connectionTime" },
-        ].map((item) => (
+        ].map((item) => {
+          const decimal = decimalFields[item.key as keyof ReportFormState];
+          const isMmSs = item.key === "dmt";
+          return (
           <div className="field" style={{ minWidth: 0 }} key={item.id}>
             <label className="label" htmlFor={item.id}>
               <item.icon size={14} style={{ marginRight: 6 }} />
@@ -324,25 +354,30 @@ export function RapportPage() {
               id={item.id}
               className="input"
               type="text"
-              inputMode={item.key === "connectionTime" ? "decimal" : "numeric"}
-              pattern={item.key === "connectionTime" ? "[0-9]*[.,]?[0-9]*" : "[0-9]*"}
+              inputMode={isMmSs ? "numeric" : decimal ? "decimal" : "numeric"}
+              pattern={isMmSs ? "[0-9:]*" : decimal ? "[0-9]*[.,]?[0-9]*" : "[0-9]*"}
               disabled={(item as any).disabled}
               style={(item as any).disabled ? { background: '#f8fafc', cursor: 'not-allowed', fontWeight: 700, color: 'var(--primary)' } : {}}
-              value={item.key === "connectionTime" ? connectionTimeText : state[item.key as keyof ReportFormState]}
+              value={isMmSs ? formatMmSsDigits(dmtDigits) : decimal ? decimal[0] : state[item.key as keyof ReportFormState]}
               onChange={(e) => {
-                if (item.key === "connectionTime") {
+                if (isMmSs) {
+                  const digits = e.target.value.replace(/[^0-9]/g, '').slice(-4);
+                  setDmtDigits(digits);
+                  setState((p) => ({ ...p, dmt: mmSsDigitsToSeconds(digits) }));
+                } else if (decimal) {
                   const val = e.target.value.replace(',', '.').replace(/[^0-9.]/g, '');
-                  setConnectionTimeText(val);
-                  setState((p) => ({ ...p, connectionTime: val === '' || val === '.' ? 0 : parseFloat(val) || 0 }));
+                  decimal[1](val);
+                  setState((p) => ({ ...p, [item.key]: val === '' || val === '.' ? 0 : parseFloat(val) || 0 }));
                 } else {
                   const val = e.target.value.replace(/[^0-9]/g, '');
                   setState((p) => ({ ...p, [item.key]: val === '' ? 0 : parseInt(val) }));
                 }
               }}
-              placeholder="0"
+              placeholder={isMmSs ? "00:00" : "0"}
             />
           </div>
-        ))}
+          );
+        })}
       </div>
 
       <div style={{ marginTop: 24 }} className="field">
@@ -3414,6 +3449,7 @@ function ReportsTable({ title, reports }: { title: string; reports: DailyReport[
               <th>Manqués</th>
               <th>RDV</th>
               <th>Messages envoyés</th>
+              <th>DMT (Durée Moyenne de Traitement)</th>
               <th>Temps de connexion(cf planning)</th>
               <th>Statut</th>
             </tr>
@@ -3421,7 +3457,7 @@ function ReportsTable({ title, reports }: { title: string; reports: DailyReport[
           <tbody>
             {reports.length === 0 ? (
               <tr>
-                <td colSpan={11} style={{ textAlign: "center", padding: "40px", color: "var(--text-muted)" }}>
+                <td colSpan={12} style={{ textAlign: "center", padding: "40px", color: "var(--text-muted)" }}>
                   Aucun rapport trouvé
                 </td>
               </tr>
@@ -3437,6 +3473,7 @@ function ReportsTable({ title, reports }: { title: string; reports: DailyReport[
                   <td style={{ color: r.missed > 0 ? "var(--danger)" : "inherit" }}>{r.missed}</td>
                   <td>{r.rdvTotal}</td>
                   <td>{r.smsTotal}</td>
+                  <td>{secondsToMmSs(r.dmt)}</td>
                   <td>{r.connectionTime ?? 0}h</td>
                   <td>
                     <span className={`badge ${getStatusBadgeClass(r.status)}`}>

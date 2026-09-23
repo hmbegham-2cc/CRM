@@ -964,6 +964,22 @@ $$;
 GRANT EXECUTE ON FUNCTION public.update_user_name(UUID, TEXT) TO authenticated;
 
 -- ============================================================
+-- 21. DailyReport — champ "DMT" (Durée Moyenne de Traitement, format mm:ss,
+-- stocké en secondes ; gère aussi le cas où la colonne existe déjà en NUMERIC)
+-- ============================================================
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'DailyReport' AND column_name = 'dmt'
+  ) THEN
+    ALTER TABLE public."DailyReport" ADD COLUMN "dmt" INTEGER NOT NULL DEFAULT 0;
+  ELSE
+    ALTER TABLE public."DailyReport" ALTER COLUMN "dmt" TYPE INTEGER USING round(dmt)::integer;
+  END IF;
+END $$;
+
+-- ============================================================
 -- 16. (Optional) pg_cron scheduling
 -- Enable pg_cron in Dashboard → Database → Extensions, then run:
 --
