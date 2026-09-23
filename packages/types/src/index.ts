@@ -24,6 +24,7 @@ export interface DailyReport {
   missed: number;
   rdvTotal: number;
   smsTotal: number;
+  dmt: number;
   connectionTime: number;
   observations: string | null;
   rejectionReason: string | null;
