@@ -8,7 +8,7 @@ import { Navigate, useNavigate, useSearchParams } from "react-router-dom";
 import type { Campaign, DailyReport, Role } from "@crc/types";
 import {
   getCampaigns, getCampaignsLite, createCampaign, updateCampaign, deleteCampaign,
-  assignTeam, assignUserCampaigns, getUsers, getUsersLite, updateUserRole, getReports, upsertReport,
+  assignTeam, assignUserCampaigns, getUsers, getUsersLite, updateUserRole, getReports, upsertReport, updateReportFields,
   submitReport, actionReport, getNotifications, markNotificationRead,
   markAllNotificationsRead, deleteNotification, deleteAllNotifications,
   inviteUser, forgotPassword, changePassword, setupPassword, exportReports,
@@ -206,6 +206,15 @@ function secondsToMmSs(totalSeconds: number) {
   const ss = s % 60;
   return `${String(mm).padStart(2, "0")}:${String(ss).padStart(2, "0")}`;
 }
+
+function secondsToMmSsDigits(totalSeconds: number) {
+  const s = Math.max(0, Math.round(totalSeconds || 0));
+  const mm = Math.floor(s / 60);
+  const ss = s % 60;
+  return `${String(mm).padStart(2, "0")}${String(ss).padStart(2, "0")}`;
+}
+
+const EDITABLE_REPORT_STATUSES = ["DRAFT", "SUBMITTED"];
 
 export function RapportPage() {
   const { user } = useAuth();
@@ -432,10 +441,139 @@ export function RapportPage() {
   );
 }
 
+function EditReportModal({ report, onClose, onSaved }: { report: DailyReport; onClose: () => void; onSaved: () => void }) {
+  const [state, setState] = useState<ReportFormState>({
+    incomingTotal: report.incomingTotal,
+    outgoingTotal: report.outgoingTotal,
+    handled: report.handled,
+    missed: report.missed,
+    rdvTotal: report.rdvTotal,
+    smsTotal: report.smsTotal,
+    dmt: report.dmt,
+    connectionTime: report.connectionTime,
+    observations: report.observations ?? "",
+  });
+  const [dmtDigits, setDmtDigits] = useState(() => secondsToMmSsDigits(report.dmt));
+  const [connectionTimeText, setConnectionTimeText] = useState(String(report.connectionTime ?? 0));
+  const [busy, run] = useAsync();
+
+  useEffect(() => {
+    setState((prev) => ({
+      ...prev,
+      handled: (Number(prev.incomingTotal) || 0) + (Number(prev.outgoingTotal) || 0),
+    }));
+  }, [state.incomingTotal, state.outgoingTotal]);
+
+  const decimalFields: Partial<Record<keyof ReportFormState, [string, (v: string) => void]>> = {
+    connectionTime: [connectionTimeText, setConnectionTimeText],
+  };
+
+  async function save() {
+    if ([state.incomingTotal, state.outgoingTotal, state.handled, state.missed,
+         state.rdvTotal, state.smsTotal, state.dmt, state.connectionTime].some((n) => n < 0)) {
+      toast.error("Les valeurs ne peuvent pas être négatives");
+      return;
+    }
+    await run(async () => {
+      try {
+        await updateReportFields(report.id, state);
+        toast.success("Rapport mis à jour");
+        onSaved();
+        onClose();
+      } catch (err: any) {
+        toast.error(err.message || "Impossible de mettre à jour le rapport");
+      }
+    });
+  }
+
+  return (
+    <ConfirmModal
+      open
+      title="Modifier le rapport"
+      confirmLabel="Enregistrer"
+      variant="primary"
+      busy={busy}
+      maxWidth={640}
+      onCancel={onClose}
+      onConfirm={save}
+      message={
+        <div style={{ display: "grid", gap: 12 }}>
+          <div className="muted" style={{ fontSize: 13 }}>
+            {new Date(report.date).toLocaleDateString("fr-FR")} — {report.campaign.name}
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 12 }}>
+            {[
+              { id: "edit-incomingTotal", label: "Appels reçus", icon: PhoneIncoming, key: "incomingTotal" },
+              { id: "edit-outgoingTotal", label: "Appels émis", icon: PhoneOutgoing, key: "outgoingTotal" },
+              { id: "edit-handled", label: "Appels traités (Auto)", icon: CheckSquare, key: "handled", disabled: true },
+              { id: "edit-missed", label: "Appels manqués", icon: PhoneMissed, key: "missed" },
+              { id: "edit-rdvTotal", label: "Nombre de RDV", icon: ClipboardCheck, key: "rdvTotal" },
+              { id: "edit-smsTotal", label: "Nombre de messages envoyés", icon: MessageSquare, key: "smsTotal" },
+              { id: "edit-dmt", label: "DMT (Durée Moyenne de Traitement)", icon: Timer, key: "dmt" },
+              { id: "edit-connectionTime", label: "Temps de connexion(cf planning)", icon: Clock, key: "connectionTime" },
+            ].map((item) => {
+              const decimal = decimalFields[item.key as keyof ReportFormState];
+              const isMmSs = item.key === "dmt";
+              return (
+                <div className="field" style={{ minWidth: 0, marginBottom: 0 }} key={item.id}>
+                  <label className="label" htmlFor={item.id}>
+                    <item.icon size={14} style={{ marginRight: 6 }} />
+                    {item.label}
+                  </label>
+                  <input
+                    id={item.id}
+                    className="input"
+                    type="text"
+                    inputMode={isMmSs ? "numeric" : decimal ? "decimal" : "numeric"}
+                    pattern={isMmSs ? "[0-9:]*" : decimal ? "[0-9]*[.,]?[0-9]*" : "[0-9]*"}
+                    disabled={(item as any).disabled}
+                    style={(item as any).disabled ? { background: '#f8fafc', cursor: 'not-allowed', fontWeight: 700, color: 'var(--primary)' } : {}}
+                    value={isMmSs ? formatMmSsDigits(dmtDigits) : decimal ? decimal[0] : state[item.key as keyof ReportFormState]}
+                    onChange={(e) => {
+                      if (isMmSs) {
+                        const digits = e.target.value.replace(/[^0-9]/g, '').slice(-4);
+                        setDmtDigits(digits);
+                        setState((p) => ({ ...p, dmt: mmSsDigitsToSeconds(digits) }));
+                      } else if (decimal) {
+                        const val = e.target.value.replace(',', '.').replace(/[^0-9.]/g, '');
+                        decimal[1](val);
+                        setState((p) => ({ ...p, [item.key]: val === '' || val === '.' ? 0 : parseFloat(val) || 0 }));
+                      } else {
+                        const val = e.target.value.replace(/[^0-9]/g, '');
+                        setState((p) => ({ ...p, [item.key]: val === '' ? 0 : parseInt(val) }));
+                      }
+                    }}
+                    placeholder={isMmSs ? "00:00" : "0"}
+                  />
+                </div>
+              );
+            })}
+          </div>
+          <div className="field" style={{ marginBottom: 0 }}>
+            <label className="label" htmlFor="edit-observations">
+              <MessageSquare size={14} style={{ marginRight: 6 }} />
+              Observations
+            </label>
+            <textarea
+              id="edit-observations"
+              className="input"
+              rows={3}
+              placeholder="Commentaires, contexte, anomalies..."
+              value={state.observations}
+              onChange={(e) => setState((p) => ({ ...p, observations: e.target.value }))}
+            />
+          </div>
+        </div>
+      }
+    />
+  );
+}
+
 export function MesSaisiesPage() {
   const { user } = useAuth();
   const [reports, setReports] = useState<DailyReport[]>([]);
   const [loading, setLoading] = useState(true);
+  const [editing, setEditing] = useState<DailyReport | null>(null);
 
   const load = () => {
     if (!user?.id) {
@@ -474,7 +612,19 @@ export function MesSaisiesPage() {
           <LoadingState label="Chargement de vos rapports..." />
         </div>
       ) : (
-        <ReportsTable title="Historique" reports={reports} />
+        <ReportsTable
+          title="Historique"
+          reports={reports}
+          onEdit={user?.role === "TELECONSEILLER" ? setEditing : undefined}
+        />
+      )}
+
+      {editing && (
+        <EditReportModal
+          report={editing}
+          onClose={() => setEditing(null)}
+          onSaved={load}
+        />
       )}
     </div>
   );
@@ -536,6 +686,60 @@ export function ValidationPage() {
     }
   }
 
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editState, setEditState] = useState<ReportFormState | null>(null);
+  const [editDmtDigits, setEditDmtDigits] = useState("");
+  const [editConnectionTimeText, setEditConnectionTimeText] = useState("0");
+  const [editBusy, runEdit] = useAsync();
+
+  useEffect(() => {
+    setEditState((p) => p && ({
+      ...p,
+      handled: (Number(p.incomingTotal) || 0) + (Number(p.outgoingTotal) || 0),
+    }));
+  }, [editState?.incomingTotal, editState?.outgoingTotal]);
+
+  function startEdit(r: DailyReport) {
+    setEditingId(r.id);
+    setEditState({
+      incomingTotal: r.incomingTotal,
+      outgoingTotal: r.outgoingTotal,
+      handled: r.handled,
+      missed: r.missed,
+      rdvTotal: r.rdvTotal,
+      smsTotal: r.smsTotal,
+      dmt: r.dmt,
+      connectionTime: r.connectionTime,
+      observations: r.observations ?? "",
+    });
+    setEditDmtDigits(secondsToMmSsDigits(r.dmt));
+    setEditConnectionTimeText(String(r.connectionTime ?? 0));
+  }
+
+  function cancelEdit() {
+    setEditingId(null);
+    setEditState(null);
+  }
+
+  async function saveEdit(r: DailyReport) {
+    if (!editState) return;
+    if ([editState.incomingTotal, editState.outgoingTotal, editState.handled, editState.missed,
+         editState.rdvTotal, editState.smsTotal, editState.dmt, editState.connectionTime].some((n) => n < 0)) {
+      toast.error("Les valeurs ne peuvent pas être négatives");
+      return;
+    }
+    await runEdit(async () => {
+      try {
+        await updateReportFields(r.id, editState);
+        setReports((prev) => prev.map((x) => (x.id === r.id ? { ...x, ...editState } : x)));
+        toast.success("Rapport mis à jour");
+        cancelEdit();
+      } catch (err: any) {
+        toast.error(err.message || "Impossible de mettre à jour le rapport");
+      }
+    });
+  }
+
   return (
     <div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "24px" }}>
@@ -594,7 +798,41 @@ export function ValidationPage() {
       ) : (
         <div style={{ display: "grid", gap: "16px" }}>
           {reports.map((r) => (
-            <div key={r.id} className="card" style={{ margin: 0 }}>
+            <div key={r.id} className="card" style={{ margin: 0, position: "relative" }}>
+              <div style={{ position: "absolute", top: 16, right: 16, display: "flex", gap: 6 }}>
+                {editingId === r.id ? (
+                  <>
+                    <button
+                      className="btn-icon"
+                      style={{ background: "none", border: "none", padding: 2, cursor: "pointer", color: "var(--danger)", display: "inline-flex" }}
+                      title="Annuler"
+                      disabled={editBusy}
+                      onClick={cancelEdit}
+                    >
+                      <XCircle size={18} />
+                    </button>
+                    <button
+                      className="btn-icon"
+                      style={{ background: "none", border: "none", padding: 2, cursor: "pointer", color: "var(--success)", display: "inline-flex" }}
+                      title="Enregistrer"
+                      disabled={editBusy}
+                      onClick={() => saveEdit(r)}
+                    >
+                      {editBusy ? <Spinner size={18} /> : <Check size={18} />}
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    className="btn-icon"
+                    style={{ background: "none", border: "none", padding: 2, cursor: "pointer", color: "var(--primary)", display: "inline-flex" }}
+                    title="Éditer"
+                    onClick={() => startEdit(r)}
+                  >
+                    <Pencil size={16} />
+                  </button>
+                )}
+              </div>
+
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
                 <div>
                   <div style={{ display: "flex", alignItems: "center", gap: "12px", marginBottom: "8px" }}>
@@ -611,49 +849,102 @@ export function ValidationPage() {
                     <span style={{ fontWeight: 600 }}>{r.campaign.name}</span>
                   </div>
                 </div>
-                
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "12px", width: "100%", marginTop: "16px", padding: "12px", background: "#f8fafc", borderRadius: "12px" }}>
-                  <div style={{ textAlign: "center" }}>
-                    <div className="muted" style={{ fontSize: "10px", fontWeight: 700 }}>REÇUS</div>
-                    <div style={{ fontWeight: 800, color: "var(--primary)" }}>{r.incomingTotal}</div>
-                  </div>
-                  <div style={{ textAlign: "center" }}>
-                    <div className="muted" style={{ fontSize: "10px", fontWeight: 700 }}>ÉMIS</div>
-                    <div style={{ fontWeight: 800, color: "var(--primary)" }}>{r.outgoingTotal}</div>
-                  </div>
-                  <div style={{ textAlign: "center" }}>
-                    <div className="muted" style={{ fontSize: "10px", fontWeight: 700 }}>TRAITÉS</div>
-                    <div style={{ fontWeight: 800, color: "var(--success)" }}>{r.handled}</div>
-                  </div>
-                  <div style={{ textAlign: "center" }}>
-                    <div className="muted" style={{ fontSize: "10px", fontWeight: 700 }}>MANQUÉS</div>
-                    <div style={{ fontWeight: 800, color: "var(--danger)" }}>{r.missed}</div>
-                  </div>
-                  <div style={{ textAlign: "center" }}>
-                    <div className="muted" style={{ fontSize: "10px", fontWeight: 700 }}>RDV</div>
-                    <div style={{ fontWeight: 800, color: "var(--accent)" }}>{r.rdvTotal}</div>
-                  </div>
-                  <div style={{ textAlign: "center" }}>
-                    <div className="muted" style={{ fontSize: "10px", fontWeight: 700 }}>Messages envoyés</div>
-                    <div style={{ fontWeight: 800, color: "var(--secondary)" }}>{r.smsTotal}</div>
-                  </div>
+
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(100px, 1fr))", gap: "12px", width: "100%", marginTop: "16px", padding: "12px", background: "#f8fafc", borderRadius: "12px" }}>
+                  {[
+                    { key: "incomingTotal", label: "REÇUS", color: "var(--primary)" },
+                    { key: "outgoingTotal", label: "ÉMIS", color: "var(--primary)" },
+                    { key: "handled", label: "TRAITÉS", color: "var(--success)", disabled: true },
+                    { key: "missed", label: "MANQUÉS", color: "var(--danger)" },
+                    { key: "rdvTotal", label: "RDV", color: "var(--accent)" },
+                    { key: "smsTotal", label: "Messages envoyés", color: "var(--secondary)" },
+                    { key: "dmt", label: "DMT", color: "var(--primary)", mmss: true },
+                    { key: "connectionTime", label: "Temps connexion", color: "var(--primary)", decimal: true },
+                  ].map((f) => (
+                    <div style={{ textAlign: "center" }} key={f.key}>
+                      <div className="muted" style={{ fontSize: "10px", fontWeight: 700 }}>{f.label}</div>
+                      {editingId === r.id && editState ? (
+                        f.mmss ? (
+                          <input
+                            className="input"
+                            type="text"
+                            inputMode="numeric"
+                            pattern="[0-9:]*"
+                            style={{ textAlign: "center", padding: "4px 6px", fontSize: 13, height: "auto" }}
+                            value={formatMmSsDigits(editDmtDigits)}
+                            onChange={(e) => {
+                              const digits = e.target.value.replace(/[^0-9]/g, '').slice(-4);
+                              setEditDmtDigits(digits);
+                              setEditState((p) => p && ({ ...p, dmt: mmSsDigitsToSeconds(digits) }));
+                            }}
+                            placeholder="00:00"
+                          />
+                        ) : f.decimal ? (
+                          <input
+                            className="input"
+                            type="text"
+                            inputMode="decimal"
+                            pattern="[0-9]*[.,]?[0-9]*"
+                            style={{ textAlign: "center", padding: "4px 6px", fontSize: 13, height: "auto" }}
+                            value={editConnectionTimeText}
+                            onChange={(e) => {
+                              const val = e.target.value.replace(',', '.').replace(/[^0-9.]/g, '');
+                              setEditConnectionTimeText(val);
+                              setEditState((p) => p && ({ ...p, connectionTime: val === '' || val === '.' ? 0 : parseFloat(val) || 0 }));
+                            }}
+                            placeholder="0"
+                          />
+                        ) : (
+                          <input
+                            className="input"
+                            type="text"
+                            inputMode="numeric"
+                            pattern="[0-9]*"
+                            disabled={f.disabled}
+                            style={{ textAlign: "center", padding: "4px 6px", fontSize: 13, height: "auto", ...(f.disabled ? { background: '#f1f5f9', cursor: 'not-allowed', fontWeight: 700, color: 'var(--primary)' } : {}) }}
+                            value={editState[f.key as keyof ReportFormState]}
+                            onChange={(e) => {
+                              const val = e.target.value.replace(/[^0-9]/g, '');
+                              setEditState((p) => p && ({ ...p, [f.key]: val === '' ? 0 : parseInt(val) }));
+                            }}
+                            placeholder="0"
+                          />
+                        )
+                      ) : (
+                        <div style={{ fontWeight: 800, color: f.color }}>
+                          {f.mmss ? secondsToMmSs(r.dmt) : f.decimal ? `${r.connectionTime ?? 0}h` : r[f.key as keyof DailyReport] as number}
+                        </div>
+                      )}
+                    </div>
+                  ))}
                 </div>
               </div>
 
-              {r.observations && (
+              {editingId === r.id ? (
+                <div style={{ marginTop: "16px" }}>
+                  <label className="label" style={{ fontSize: 12 }}>Observations</label>
+                  <textarea
+                    className="input"
+                    rows={2}
+                    placeholder="Commentaires, contexte, anomalies..."
+                    value={editState?.observations ?? ""}
+                    onChange={(e) => setEditState((p) => p && ({ ...p, observations: e.target.value }))}
+                  />
+                </div>
+              ) : r.observations ? (
                 <div style={{ marginTop: "16px", padding: "12px", background: "#f8fafc", borderRadius: "8px", fontSize: "13px" }}>
                   <div style={{ fontWeight: 600, fontSize: "11px", color: "var(--text-muted)", marginBottom: "4px" }}>OBSERVATIONS :</div>
                   {r.observations}
                 </div>
-              )}
+              ) : null}
 
               <div style={{ marginTop: "20px", borderTop: "1px solid var(--border)", paddingTop: "16px" }}>
                 <div className="field" style={{ marginBottom: "12px" }}>
                   <label className="label" style={{ fontSize: "12px", color: "var(--danger)" }}>Raison du rejet (optionnel)</label>
-                  <input 
-                    className="input" 
-                    placeholder="Expliquez pourquoi ce rapport est rejeté..." 
-                    value={rejectReasons[r.id] || ""} 
+                  <input
+                    className="input"
+                    placeholder="Expliquez pourquoi ce rapport est rejeté..."
+                    value={rejectReasons[r.id] || ""}
                     onChange={(e) => setRejectReasons((prev) => ({ ...prev, [r.id]: e.target.value }))}
                     style={{ fontSize: "13px" }}
                   />
@@ -662,7 +953,7 @@ export function ValidationPage() {
                   <button
                     className="btn btn-primary"
                     onClick={() => act(r.id, "validate")}
-                    disabled={!!acting[r.id]}
+                    disabled={!!acting[r.id] || editingId === r.id}
                     style={{ background: "var(--success)" }}
                   >
                     {acting[r.id] === "validate" ? <Spinner size={18} /> : <CheckSquare size={18} />}
@@ -671,7 +962,7 @@ export function ValidationPage() {
                   <button
                     className="btn btn-danger"
                     onClick={() => act(r.id, "reject")}
-                    disabled={!!acting[r.id]}
+                    disabled={!!acting[r.id] || editingId === r.id}
                   >
                     {acting[r.id] === "reject" ? <Spinner size={18} /> : <AlertCircle size={18} />}
                     {acting[r.id] === "reject" ? "Rejet..." : "Rejeter"}
@@ -3432,7 +3723,7 @@ function getStatusBadgeClass(status: string) {
   }
 }
 
-function ReportsTable({ title, reports }: { title: string; reports: DailyReport[] }) {
+function ReportsTable({ title, reports, onEdit }: { title: string; reports: DailyReport[]; onEdit?: (report: DailyReport) => void }) {
   return (
     <div className="card table-card">
       <h2 style={{ marginBottom: "20px" }}>{title}</h2>
@@ -3452,12 +3743,13 @@ function ReportsTable({ title, reports }: { title: string; reports: DailyReport[
               <th>DMT (Durée Moyenne de Traitement)</th>
               <th>Temps de connexion(cf planning)</th>
               <th>Statut</th>
+              {onEdit && <th>Actions</th>}
             </tr>
           </thead>
           <tbody>
             {reports.length === 0 ? (
               <tr>
-                <td colSpan={12} style={{ textAlign: "center", padding: "40px", color: "var(--text-muted)" }}>
+                <td colSpan={onEdit ? 13 : 12} style={{ textAlign: "center", padding: "40px", color: "var(--text-muted)" }}>
                   Aucun rapport trouvé
                 </td>
               </tr>
@@ -3480,6 +3772,20 @@ function ReportsTable({ title, reports }: { title: string; reports: DailyReport[
                       {r.status}
                     </span>
                   </td>
+                  {onEdit && (
+                    <td>
+                      {EDITABLE_REPORT_STATUSES.includes(r.status) && (
+                        <button
+                          className="btn-icon"
+                          style={{ background: "none", border: "none", padding: 2, cursor: "pointer", color: "var(--primary)", display: "inline-flex" }}
+                          title="Modifier"
+                          onClick={() => onEdit(r)}
+                        >
+                          <Pencil size={14} />
+                        </button>
+                      )}
+                    </td>
+                  )}
                 </tr>
               ))
             )}
