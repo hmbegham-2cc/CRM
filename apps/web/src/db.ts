@@ -412,6 +412,30 @@ export async function upsertReport(reportData: {
   return data!;
 }
 
+// Updates a report by its own id, regardless of who owns it. Unlike
+// upsertReport (which matches an existing row via date+campaignId+userId of
+// the CALLER, for a user editing their own submission), this is for a
+// supervisor/coach/admin correcting someone else's already-submitted report
+// from the Validation page — upsertReport would silently create a phantom
+// draft owned by the caller instead of touching the real report.
+export async function updateReportFields(reportId: string, fields: {
+  incomingTotal: number;
+  outgoingTotal: number;
+  handled: number;
+  missed: number;
+  rdvTotal: number;
+  smsTotal: number;
+  dmt: number;
+  connectionTime: number;
+  observations?: string;
+}) {
+  const { error } = await supabase
+    .from("DailyReport")
+    .update({ ...fields, updatedAt: new Date().toISOString() })
+    .eq("id", reportId);
+  if (error) fail(error, "Impossible de mettre à jour le rapport");
+}
+
 export async function submitReport(id: string) {
   const { data, error } = await supabase.rpc("submit_report", { p_report_id: id });
   if (error) fail(error, "Impossible de soumettre le rapport");

@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { Spinner } from "./Spinner";
 
 export interface ConfirmModalProps {
   open: boolean;
@@ -8,6 +9,7 @@ export interface ConfirmModalProps {
   cancelLabel?: string;
   variant?: "danger" | "primary";
   busy?: boolean;
+  maxWidth?: number;
   onConfirm: () => void;
   onCancel: () => void;
 }
@@ -24,6 +26,7 @@ export function ConfirmModal({
   cancelLabel = "Annuler",
   variant = "danger",
   busy = false,
+  maxWidth = 460,
   onConfirm,
   onCancel,
 }: ConfirmModalProps) {
@@ -66,14 +69,17 @@ export function ConfirmModal({
           background: "#fff",
           borderRadius: 12,
           padding: 24,
-          maxWidth: 460,
+          maxWidth,
           width: "100%",
+          maxHeight: "90vh",
+          display: "flex",
+          flexDirection: "column",
           boxShadow: "0 20px 50px rgba(0,0,0,0.25)",
         }}
       >
-        <h3 id="confirm-title" style={{ marginTop: 0, marginBottom: 12 }}>{title}</h3>
-        <div style={{ color: "#475569", marginBottom: 24, lineHeight: 1.5 }}>{message}</div>
-        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+        <h3 id="confirm-title" style={{ marginTop: 0, marginBottom: 12, flexShrink: 0 }}>{title}</h3>
+        <div style={{ color: "#475569", marginBottom: 24, lineHeight: 1.5, overflowY: "auto" }}>{message}</div>
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, flexShrink: 0 }}>
           <button
             ref={cancelBtn}
             className="btn btn-secondary"
@@ -83,7 +89,8 @@ export function ConfirmModal({
             {cancelLabel}
           </button>
           <button className={confirmClass} onClick={onConfirm} disabled={busy}>
-            {busy ? "..." : confirmLabel}
+            {busy && <Spinner size={14} style={{ marginRight: 6 }} />}
+            {confirmLabel}
           </button>
         </div>
       </div>
