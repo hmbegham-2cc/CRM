@@ -1602,7 +1602,7 @@ export function AllReportsPage() {
       {loading ? (
         <div className="card"><LoadingState label="Chargement..." /></div>
       ) : (
-        <ReportsTable title="Liste des rapports" reports={reports} />
+        <ReportsTable title="Liste des rapports" reports={reports} inlineEditable onSaved={load} />
       )}
     </div>
   );
@@ -3723,12 +3723,91 @@ function getStatusBadgeClass(status: string) {
   }
 }
 
-function ReportsTable({ title, reports, onEdit }: { title: string; reports: DailyReport[]; onEdit?: (report: DailyReport) => void }) {
+const REPORT_STAT_COLUMNS: { key: keyof ReportFormState; mmss?: boolean; decimal?: boolean; disabled?: boolean }[] = [
+  { key: "incomingTotal" },
+  { key: "outgoingTotal" },
+  { key: "handled", disabled: true },
+  { key: "missed" },
+  { key: "rdvTotal" },
+  { key: "smsTotal" },
+  { key: "dmt", mmss: true },
+  { key: "connectionTime", decimal: true },
+];
+
+function ReportsTable({
+  title,
+  reports,
+  onEdit,
+  inlineEditable,
+  onSaved,
+}: {
+  title: string;
+  reports: DailyReport[];
+  onEdit?: (report: DailyReport) => void;
+  inlineEditable?: boolean;
+  onSaved?: () => void;
+}) {
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editState, setEditState] = useState<ReportFormState | null>(null);
+  const [editDmtDigits, setEditDmtDigits] = useState("");
+  const [editConnectionTimeText, setEditConnectionTimeText] = useState("0");
+  const [editBusy, runEdit] = useAsync();
+
+  useEffect(() => {
+    setEditState((p) => p && ({
+      ...p,
+      handled: (Number(p.incomingTotal) || 0) + (Number(p.outgoingTotal) || 0),
+    }));
+  }, [editState?.incomingTotal, editState?.outgoingTotal]);
+
+  function startEdit(r: DailyReport) {
+    setEditingId(r.id);
+    setEditState({
+      incomingTotal: r.incomingTotal,
+      outgoingTotal: r.outgoingTotal,
+      handled: r.handled,
+      missed: r.missed,
+      rdvTotal: r.rdvTotal,
+      smsTotal: r.smsTotal,
+      dmt: r.dmt,
+      connectionTime: r.connectionTime,
+      observations: r.observations ?? "",
+    });
+    setEditDmtDigits(secondsToMmSsDigits(r.dmt));
+    setEditConnectionTimeText(String(r.connectionTime ?? 0));
+  }
+
+  function cancelEdit() {
+    setEditingId(null);
+    setEditState(null);
+  }
+
+  async function saveEdit(r: DailyReport) {
+    if (!editState) return;
+    if ([editState.incomingTotal, editState.outgoingTotal, editState.handled, editState.missed,
+         editState.rdvTotal, editState.smsTotal, editState.dmt, editState.connectionTime].some((n) => n < 0)) {
+      toast.error("Les valeurs ne peuvent pas être négatives");
+      return;
+    }
+    await runEdit(async () => {
+      try {
+        await updateReportFields(r.id, editState);
+        toast.success("Rapport mis à jour");
+        cancelEdit();
+        onSaved?.();
+      } catch (err: any) {
+        toast.error(err.message || "Impossible de mettre à jour le rapport");
+      }
+    });
+  }
+
+  const hasActionsColumn = !!onEdit || !!inlineEditable;
+
   return (
     <div className="card table-card">
       <h2 style={{ marginBottom: "20px" }}>{title}</h2>
       <div className="table-scroll">
-        <table>
+        <table className="table-compact">
           <thead>
             <tr>
               <th>Date</th>
@@ -3740,54 +3819,146 @@ function ReportsTable({ title, reports, onEdit }: { title: string; reports: Dail
               <th>Manqués</th>
               <th>RDV</th>
               <th>Messages envoyés</th>
-              <th>DMT (Durée Moyenne de Traitement)</th>
-              <th>Temps de connexion(cf planning)</th>
+              <th>DMT (Durée Moy Traitement)</th>
+              <th>Temps connexion(cf planning)</th>
               <th>Statut</th>
-              {onEdit && <th>Actions</th>}
+              {hasActionsColumn && <th>Actions</th>}
             </tr>
           </thead>
           <tbody>
             {reports.length === 0 ? (
               <tr>
-                <td colSpan={onEdit ? 13 : 12} style={{ textAlign: "center", padding: "40px", color: "var(--text-muted)" }}>
+                <td colSpan={hasActionsColumn ? 13 : 12} style={{ textAlign: "center", padding: "40px", color: "var(--text-muted)" }}>
                   Aucun rapport trouvé
                 </td>
               </tr>
             ) : (
-              reports.map((r) => (
+              reports.map((r) => {
+                const isEditingRow = inlineEditable && editingId === r.id && editState;
+                return (
                 <tr key={r.id}>
                   <td style={{ fontWeight: 600 }}>{new Date(r.date).toLocaleDateString("fr-FR")}</td>
                   <td>{r.campaign.name}</td>
                   <td>{r.user.name ?? r.user.email}</td>
-                  <td>{r.incomingTotal}</td>
-                  <td>{r.outgoingTotal}</td>
-                  <td>{r.handled}</td>
-                  <td style={{ color: r.missed > 0 ? "var(--danger)" : "inherit" }}>{r.missed}</td>
-                  <td>{r.rdvTotal}</td>
-                  <td>{r.smsTotal}</td>
-                  <td>{secondsToMmSs(r.dmt)}</td>
-                  <td>{r.connectionTime ?? 0}h</td>
+                  {isEditingRow ? (
+                    REPORT_STAT_COLUMNS.map((f) => (
+                      <td key={f.key}>
+                        {f.mmss ? (
+                          <input
+                            className="input"
+                            type="text"
+                            inputMode="numeric"
+                            pattern="[0-9:]*"
+                            style={{ minWidth: 60, padding: "4px 6px", fontSize: 13, height: "auto", textAlign: "center" }}
+                            value={formatMmSsDigits(editDmtDigits)}
+                            onChange={(e) => {
+                              const digits = e.target.value.replace(/[^0-9]/g, '').slice(-4);
+                              setEditDmtDigits(digits);
+                              setEditState((p) => p && ({ ...p, dmt: mmSsDigitsToSeconds(digits) }));
+                            }}
+                            placeholder="00:00"
+                          />
+                        ) : f.decimal ? (
+                          <input
+                            className="input"
+                            type="text"
+                            inputMode="decimal"
+                            pattern="[0-9]*[.,]?[0-9]*"
+                            style={{ minWidth: 60, padding: "4px 6px", fontSize: 13, height: "auto", textAlign: "center" }}
+                            value={editConnectionTimeText}
+                            onChange={(e) => {
+                              const val = e.target.value.replace(',', '.').replace(/[^0-9.]/g, '');
+                              setEditConnectionTimeText(val);
+                              setEditState((p) => p && ({ ...p, connectionTime: val === '' || val === '.' ? 0 : parseFloat(val) || 0 }));
+                            }}
+                            placeholder="0"
+                          />
+                        ) : (
+                          <input
+                            className="input"
+                            type="text"
+                            inputMode="numeric"
+                            pattern="[0-9]*"
+                            disabled={f.disabled}
+                            style={{ minWidth: 60, padding: "4px 6px", fontSize: 13, height: "auto", textAlign: "center", ...(f.disabled ? { background: '#f1f5f9', cursor: 'not-allowed', fontWeight: 700, color: 'var(--primary)' } : {}) }}
+                            value={editState[f.key]}
+                            onChange={(e) => {
+                              const val = e.target.value.replace(/[^0-9]/g, '');
+                              setEditState((p) => p && ({ ...p, [f.key]: val === '' ? 0 : parseInt(val) }));
+                            }}
+                            placeholder="0"
+                          />
+                        )}
+                      </td>
+                    ))
+                  ) : (
+                    <>
+                      <td>{r.incomingTotal}</td>
+                      <td>{r.outgoingTotal}</td>
+                      <td>{r.handled}</td>
+                      <td style={{ color: r.missed > 0 ? "var(--danger)" : "inherit" }}>{r.missed}</td>
+                      <td>{r.rdvTotal}</td>
+                      <td>{r.smsTotal}</td>
+                      <td>{secondsToMmSs(r.dmt)}</td>
+                      <td>{r.connectionTime ?? 0}h</td>
+                    </>
+                  )}
                   <td>
-                    <span className={`badge ${getStatusBadgeClass(r.status)}`}>
+                    <span className={`badge ${getStatusBadgeClass(r.status)}`} style={{ padding: "2px 8px", fontSize: 10 }}>
                       {r.status}
                     </span>
                   </td>
-                  {onEdit && (
+                  {hasActionsColumn && (
                     <td>
-                      {EDITABLE_REPORT_STATUSES.includes(r.status) && (
-                        <button
-                          className="btn-icon"
-                          style={{ background: "none", border: "none", padding: 2, cursor: "pointer", color: "var(--primary)", display: "inline-flex" }}
-                          title="Modifier"
-                          onClick={() => onEdit(r)}
-                        >
-                          <Pencil size={14} />
-                        </button>
+                      {inlineEditable ? (
+                        isEditingRow ? (
+                          <div style={{ display: "flex", gap: 6 }}>
+                            <button
+                              className="btn-icon"
+                              style={{ background: "none", border: "none", padding: 2, cursor: "pointer", color: "var(--danger)", display: "inline-flex" }}
+                              title="Annuler"
+                              disabled={editBusy}
+                              onClick={cancelEdit}
+                            >
+                              <XCircle size={16} />
+                            </button>
+                            <button
+                              className="btn-icon"
+                              style={{ background: "none", border: "none", padding: 2, cursor: "pointer", color: "var(--success)", display: "inline-flex" }}
+                              title="Enregistrer"
+                              disabled={editBusy}
+                              onClick={() => saveEdit(r)}
+                            >
+                              {editBusy ? <Spinner size={16} /> : <Check size={16} />}
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            className="btn-icon"
+                            style={{ background: "none", border: "none", padding: 2, cursor: "pointer", color: "var(--primary)", display: "inline-flex" }}
+                            title="Modifier"
+                            onClick={() => startEdit(r)}
+                          >
+                            <Pencil size={14} />
+                          </button>
+                        )
+                      ) : (
+                        onEdit && EDITABLE_REPORT_STATUSES.includes(r.status) && (
+                          <button
+                            className="btn-icon"
+                            style={{ background: "none", border: "none", padding: 2, cursor: "pointer", color: "var(--primary)", display: "inline-flex" }}
+                            title="Modifier"
+                            onClick={() => onEdit(r)}
+                          >
+                            <Pencil size={14} />
+                          </button>
+                        )
                       )}
                     </td>
                   )}
                 </tr>
-              ))
+                );
+              })
             )}
           </tbody>
         </table>
